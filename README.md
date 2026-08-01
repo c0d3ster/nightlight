@@ -16,7 +16,7 @@ This repo holds the runner and its config — nothing else. No dependencies, no 
 - [Claude Code](https://docs.claude.com/en/docs/claude-code) CLI, logged in.
 - [pnpm](https://pnpm.io) — used only as a task runner here (`pnpm plan`, `pnpm overnight`), no actual dependencies to install.
 - Git, GitHub CLI (`gh`) authenticated for the target repo.
-- [`jq`](https://jqlang.org) — formats the live session output (see Usage below).
+- [`jq`](https://jqlang.org) — formats the live session output (see Usage below). `brew install jq` (macOS), `winget install jqlang.jq` / `choco install jq` / `scoop install jq` (Windows), `apt install jq` (Debian/Ubuntu). Full list: [jqlang.org/download](https://jqlang.org/download).
 - A target repo with a `TASKS.md` at its root (see format below) and a `CLAUDE.md` with your test command and conventions.
 
 ## Configuration
