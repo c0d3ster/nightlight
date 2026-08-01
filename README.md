@@ -111,7 +111,13 @@ Thin `package.json` wrappers around the two shell scripts — no dependencies, n
 
 Only run one repo at a time per machine (shared usage pool). Chain sequentially if you need more than one: `./overnight.sh repo-a && ./overnight.sh repo-b`.
 
-Output is teed to `logs/<repo>-<date>.log`, gitignored.
+Output is teed to `logs/<repo>-<date>.log`, gitignored — `tail -f` that file in another terminal to watch the session live. The agent opens one PR per task as it finishes, so the moment you see a `gh pr create` line (or a new PR shows up via `gh pr list` in the target repo) is your signal that task is done and ready to check, rather than waiting for the whole run to finish.
+
+## Behavior notes
+
+- **The session doesn't pause between tasks.** The prompt (`overnight.sh`) tells the agent to work through every Agent-Ready, Verify, and Research item in one continuous run, stopping only once everything is complete, annotated `NEEDS HUMAN`, or annotated `blocked` — not after each task.
+- **Within a stack, later tasks don't wait for earlier ones to be reviewed.** Each task branches from the previous task's branch tip, so task 2 builds on task 1's code as soon as it's written, regardless of whether you've looked at task 1's PR yet. A `NEEDS HUMAN` annotation on task 1 (missing env var, API key, etc.) doesn't pause the stack — the code is presumed complete, just not fully runnable without that step.
+- **`blocked` is for cross-stack dependencies, not same-stack ordering.** It only gets used when a task turns out mid-implementation to depend on work in a *different* stack. If a task's correctness genuinely depends on the real-world outcome of an earlier same-stack task's human-verification step (not just on that task's code existing), there's no automatic rule catching that today — it falls to the agent's judgment under the general "ambiguous, annotate why, skip it" rule.
 
 ## TASKS.md format (in the target repo)
 
