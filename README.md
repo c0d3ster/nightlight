@@ -118,6 +118,20 @@ Thin `package.json` wrappers around the two shell scripts — no dependencies, n
 
 Only run one repo at a time per machine (shared usage pool). Chain sequentially if you need more than one: `./overnight.sh repo-a && ./overnight.sh repo-b`.
 
+### Limiting a run
+
+Flags scope a single run without editing `TASKS.md` or `CLAUDE.md`. They *append* to the base prompt rather than replacing it, so the workflow rules, quality gates, and end-of-session housekeeping still apply — only the task scope changes.
+
+```bash
+./overnight.sh some-repo --stop-after 3      # only tasks numbered 1-3, then stop
+./overnight.sh some-repo --stack auth        # only tasks in [stack: auth], skip every other stack
+./overnight.sh some-repo --extra-instructions "double check the migration is reversible"
+```
+
+Task numbers refer to the continuous numbering described in TASKS.md format below. Flags require a single target repo — they're rejected in the no-arg "run every repo" mode, since scoping to one task/stack across multiple unrelated repos isn't a coherent request.
+
+There's also `--override-prompt "<text>"`, which replaces the base prompt entirely instead of appending to it. Reach for the flags above first — an override loses the housekeeping and workflow-rules framing unless `<text>` restates it.
+
 `overnight.sh` runs `claude -p` with `--output-format stream-json`, so the session's events (assistant text, tool calls, tool results) arrive incrementally rather than all at once at the end. Each line is piped through `format-stream.jq`, so the terminal you launched `overnight.sh` from shows clean, readable progress live — no separate `tail -f` needed. The agent opens one PR per task as it finishes, so a `gh pr create` call showing up in that live output is your signal that task is done and ready to check, rather than waiting for the whole run to finish.
 
 Three files land in `logs/`, all gitignored: `<repo>-<date>.jsonl` (the raw NDJSON event stream, unformatted, kept for later inspection or tooling), `<repo>-<date>.log` (the same `format-stream.jq` output shown live in your terminal, saved as-is), and `<repo>-<date>.stderr.log` (anything the `claude` process wrote to stderr, kept separate so it doesn't break the JSON stream).
@@ -134,18 +148,18 @@ Switching to `stream-json` only changes how the CLI reports events to us locally
 
 ```markdown
 ## Agent-Ready
-- [ ] [stack: auth] Add rate limiting to login endpoint
-      Acceptance: 5 failed attempts locks for 15 min, test covers it
+1. [ ] [stack: auth] Add rate limiting to login endpoint
+       Acceptance: 5 failed attempts locks for 15 min, test covers it
 
 ## Verify (may already be done)
-- [ ] Confirm CSRF protection is enabled on all POST routes
+2. [ ] Confirm CSRF protection is enabled on all POST routes
 
 ## Research
-- [ ] Compare Postgres full-text search vs. a dedicated search service
-      Output: docs/research/search-options.md
+3. [ ] Compare Postgres full-text search vs. a dedicated search service
+       Output: docs/research/search-options.md
 
 ## Decisions (human only)
-- [ ] Pick a payment provider
+4. [ ] Pick a payment provider
 
 ## Discovered
 <!-- agent appends here during a session; you triage each morning -->
@@ -156,6 +170,7 @@ Switching to `stream-json` only changes how the CLI reports events to us locally
 - **Research** — produces a markdown doc, never touches code.
 - **Decisions (human only)** — never attempted by the agent.
 - **`[stack: <name>]`** — tasks sharing a stack name are branched and PR'd in sequence (each targets the previous branch); tasks with no annotation are treated as continuing the previous task's stack. Assign these during `/plan-tasks`, not by hand.
+- **Numbering** — every task checkbox is numbered continuously down the file (across all sections, not restarting each section), so a task always has a stable-for-this-session number to reference — e.g. with `overnight.sh`'s `--stop-after`/`--stack` flags, or just in conversation. Numbers shift if tasks above are added, removed, or archived, same as any other line in the file; `/plan-tasks` and housekeeping keep them in order when they edit `TASKS.md`. `Discovered` entries aren't numbered — they're one-line notes, not planned tasks, until a human triages them into a numbered section.
 
 ## What you get in the morning
 
