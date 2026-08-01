@@ -9,7 +9,7 @@ This repo holds the runner and its config — nothing else. No dependencies, no 
 - `overnight.sh` points at a target repo, checks it has a `TASKS.md`, and launches `claude -p` with `--add-dir <target-repo>`.
 - Because the session is launched from *this* repo, its `CLAUDE.md` (the workflow rules), `.claude/settings.json` (the permission allowlist), and `.claude/skills/plan-tasks/` (the `/plan-tasks` skill) all apply — regardless of which repo got added.
 - The target repo's own `CLAUDE.md` stays exactly what it'd be without this system: test command, code conventions. No overnight-specific content ever gets written into it.
-- The agent works entirely on `overnight/<date>/*` branches, opens a PR per task, and a single housekeeping PR at the end updates `TASKS.md` and the archive. Nothing else touches those two things.
+- The agent works entirely on `overnight/<date>/*` branches, opens a PR per task, and a single housekeeping PR at the end updates `TASKS.md`, the archive, and `docs/nightlight-meta.json`. Nothing else touches those three things.
 
 ## Requirements
 
@@ -41,7 +41,7 @@ This `.env` only ever holds `PROJECT_REPOS_DIR` — a path, not a secret — and
 3. Edit `CLAUDE.md` here if you want to change the workflow rules (branching scheme, quality gates, how research tasks work, etc.) — the defaults are a reasonable starting point.
 4. Edit `.claude/settings.json` to match your actual test/lint/build commands (defaults assume npm/pnpm).
 5. In each target repo, add a `TASKS.md` with your work queue and confirm `CLAUDE.md` has a test command and conventions documented. That's the only setup required in the target repo itself.
-6. `chmod +x overnight.sh plan.sh`. No `pnpm install` needed — `package.json` has no dependencies, it's just script aliases.
+6. `chmod +x overnight.sh plan.sh stats.sh`. No `pnpm install` needed — `package.json` has no dependencies, it's just script aliases.
 
 ## plan.sh
 
@@ -65,6 +65,22 @@ This adds the target repo *and* submits `/plan-tasks` as the session's first mes
 
 Or via the `package.json` script (see Scripts below): `pnpm plan some-repo`.
 
+## stats.sh
+
+Local, gitignored cost/time reference — never committed, never touches a target repo. After every `overnight.sh` run, the per-repo `result` event (`total_cost_usd`, `duration_ms`, `num_turns`) is folded into `stats/<repo>.json` as a running total:
+
+```json
+{
+  "sessions": 13,
+  "total_cost_usd": 52.71,
+  "total_duration_s": 121430,
+  "total_turns": 2870,
+  "lastRun": {"date": "2026-08-01", "cost_usd": 4.82, "duration_s": 9310, "num_turns": 214}
+}
+```
+
+`pnpm stats some-repo` prints that repo's running totals. `pnpm stats` (no arg) sums the `total_*` fields across every `stats/*.json` file, for a comprehensive total across every repo worked from this nightlight instance. It's a snapshot, not a log — each run overwrites the file with updated totals, so there's nothing to grep through, just current numbers.
+
 ## .claude/skills/plan-tasks/SKILL.md
 
 The `/plan-tasks` skill does the task breakdown that makes the overnight run actually work — `overnight.sh` executes a queue, it doesn't design one. Run this before every session, any time `TASKS.md` has new or vague items in it.
@@ -76,22 +92,29 @@ description: Plans and stack-annotates a target repo's TASKS.md. Use when starti
 disable-model-invocation: true
 ---
 
-A target repo is attached to this session via --add-dir. Read its TASKS.md and its CLAUDE.md. For each unchecked Agent-Ready item:
+A target repo is attached to this session via --add-dir. Read its TASKS.md, its CLAUDE.md, and its docs/nightlight-meta.json (if present — its `nextTaskNumber` field is the next number to assign; treat a missing file as `nextTaskNumber: 1`). For each unchecked item across every section (Agent-Ready, Verify, Research, Decisions):
 
 1. Investigate the relevant parts of the target repo's codebase.
 2. Propose a sub-task breakdown with file-level hints and any missing acceptance criteria.
 3. Flag missing prerequisites (fixtures, env vars, dependencies) as NEEDS HUMAN annotations.
 4. Analyze dependencies AND shared-file overlap between tasks (schemas, barrel exports, shared components), then propose a [stack: <name>] annotation for every task: tasks that depend on each other or touch the same files share a stack name in execution order; genuinely independent tasks get [stack: solo]. When in doubt, stack.
+5. Assign each task in the proposal a stable `#<n>` number, starting from `nextTaskNumber` and incrementing by one per task, in the order they'll be written into TASKS.md.
 
-Present the full proposal for my approval BEFORE writing anything. After I approve, write the breakdowns and [stack] annotations into the target repo's TASKS.md. Do not implement any code in this session.
+Present the full proposal for my approval BEFORE writing anything. After I approve:
+
+- Write the breakdowns, `#<n>` numbers, and `[stack]` annotations into the target repo's TASKS.md — every checkbox line gets its number right after the checkbox, before the stack tag (e.g. `- [ ] #48 [stack: auth] Add rate limiting to login endpoint`).
+- Update `docs/nightlight-meta.json`'s `nextTaskNumber` to one past the highest number just assigned (create the file with `nextTaskNumber`, `tasksCompleted: 0`, and `tasksBlocked: 0` if it doesn't exist yet).
+
+Do not implement any code in this session.
 ```
 
 Skills live in a named folder with a `SKILL.md` inside (not a flat `.md` file directly under `.claude/skills/`) — that's the format Claude Code actually discovers. `disable-model-invocation: true` means it only runs when explicitly called via `/plan-tasks`, never auto-triggered.
 
-It matters for two reasons:
+It matters for three reasons:
 
 - **Acceptance criteria and file-level hints.** A raw task like "add rate limiting" is too vague to run unattended safely — this turns it into something with a defined "done."
 - **`[stack: <name>]` assignment.** This is what makes the overnight PRs mergeable in the right order. It's driven by real dependency and shared-file analysis (schemas, barrel exports, shared components), not guessed at — and it's deliberately biased toward stacking ("when in doubt, stack") over declaring things independent, since a false `solo` risks two PRs conflicting on the same file with no ordering to resolve it.
+- **`#<n>` numbering.** Gives every task a stable identity that survives being checked off and archived, so a PR, commit, or `## Discovered` note can reference "task #48" and still mean the same thing months later.
 
 Runs interactively, proposes before writing anything, and never implements — it only edits `TASKS.md`. `plan.sh` (below) launches it directly.
 
@@ -100,9 +123,10 @@ Runs interactively, proposes before writing anything, and never implements — i
 ```bash
 pnpm plan some-repo       # ./plan.sh some-repo
 pnpm overnight some-repo  # ./overnight.sh some-repo
+pnpm stats [some-repo]    # ./stats.sh [some-repo]
 ```
 
-Thin `package.json` wrappers around the two shell scripts — no dependencies, nothing to `pnpm install`. Args pass straight through to the script (pnpm doesn't need a `--` separator the way npm does), so `pnpm plan some-repo` and `./plan.sh some-repo` are identical. Use whichever reads better; the rest of this README uses the raw `./script.sh` form since it's unambiguous about what's actually running.
+Thin `package.json` wrappers around the shell scripts — no dependencies, nothing to `pnpm install`. Args pass straight through to the script (pnpm doesn't need a `--` separator the way npm does), so `pnpm plan some-repo` and `./plan.sh some-repo` are identical. Use whichever reads better; the rest of this README uses the raw `./script.sh` form since it's unambiguous about what's actually running.
 
 ## Usage
 
@@ -123,12 +147,12 @@ Only run one repo at a time per machine (shared usage pool). Chain sequentially 
 Flags scope a single run without editing `TASKS.md` or `CLAUDE.md`. They *append* to the base prompt rather than replacing it, so the workflow rules, quality gates, and end-of-session housekeeping still apply — only the task scope changes.
 
 ```bash
-./overnight.sh some-repo --stop-after 3      # only tasks numbered 1-3, then stop
+./overnight.sh some-repo --stop-after 3      # only the first 3 open tasks (file order), then stop
 ./overnight.sh some-repo --stack auth        # only tasks in [stack: auth], skip every other stack
 ./overnight.sh some-repo --extra-instructions "double check the migration is reversible"
 ```
 
-Task numbers refer to the continuous numbering described in TASKS.md format below. Flags require a single target repo — they're rejected in the no-arg "run every repo" mode, since scoping to one task/stack across multiple unrelated repos isn't a coherent request.
+`--stop-after N` counts open tasks from the top of `TASKS.md` in file order, across all sections — it's a count, not a reference to a task's `#<n>` (that number is permanent and generally won't start at 1, so "stop after 3" means "the first 3 you encounter tonight," not "stop at task #3"). Flags require a single target repo — they're rejected in the no-arg "run every repo" mode, since scoping to one task/stack across multiple unrelated repos isn't a coherent request.
 
 There's also `--override-prompt "<text>"`, which replaces the base prompt entirely instead of appending to it. Reach for the flags above first — an override loses the housekeeping and workflow-rules framing unless `<text>` restates it.
 
@@ -136,7 +160,7 @@ There's also `--override-prompt "<text>"`, which replaces the base prompt entire
 
 Three files land in `logs/`, all gitignored: `<repo>-<date>.jsonl` (the raw NDJSON event stream, unformatted, kept for later inspection or tooling), `<repo>-<date>.log` (the same `format-stream.jq` output shown live in your terminal, saved as-is), and `<repo>-<date>.stderr.log` (anything the `claude` process wrote to stderr, kept separate so it doesn't break the JSON stream).
 
-Switching to `stream-json` only changes how the CLI reports events to us locally — it doesn't change what the agent does or what it costs. The final `result` event includes `total_cost_usd` for the whole session, which `format-stream.jq` prints as the closing summary line.
+Switching to `stream-json` only changes how the CLI reports events to us locally — it doesn't change what the agent does or what it costs. The final `result` event includes `total_cost_usd` for the whole session, which `format-stream.jq` prints as the closing summary line, and which also feeds `stats/<repo>.json` (see [stats.sh](#statssh) above) — a separate, gitignored directory from `logs/`, since one is raw per-session debug output and the other is a small running-totals reference meant to survive longer than a day's log file.
 
 ## Behavior notes
 
@@ -148,18 +172,18 @@ Switching to `stream-json` only changes how the CLI reports events to us locally
 
 ```markdown
 ## Agent-Ready
-1. [ ] [stack: auth] Add rate limiting to login endpoint
-       Acceptance: 5 failed attempts locks for 15 min, test covers it
+- [ ] #48 [stack: auth] Add rate limiting to login endpoint
+      Acceptance: 5 failed attempts locks for 15 min, test covers it
 
 ## Verify (may already be done)
-2. [ ] Confirm CSRF protection is enabled on all POST routes
+- [ ] #49 Confirm CSRF protection is enabled on all POST routes
 
 ## Research
-3. [ ] Compare Postgres full-text search vs. a dedicated search service
-       Output: docs/research/search-options.md
+- [ ] #50 Compare Postgres full-text search vs. a dedicated search service
+      Output: docs/research/search-options.md
 
 ## Decisions (human only)
-4. [ ] Pick a payment provider
+- [ ] #51 Pick a payment provider
 
 ## Discovered
 <!-- agent appends here during a session; you triage each morning -->
@@ -169,13 +193,13 @@ Switching to `stream-json` only changes how the CLI reports events to us locally
 - **Verify** — confirmed or implemented, whichever the codebase needs.
 - **Research** — produces a markdown doc, never touches code.
 - **Decisions (human only)** — never attempted by the agent.
+- **`#<n>`** — a stable, never-reused task number assigned during `/plan-tasks`, on every section, not just Agent-Ready. It's what lets a PR, commit, or `## Discovered` note reference a specific task after it's been checked off and archived out of `TASKS.md`. Tracked in `docs/nightlight-meta.json`'s `nextTaskNumber` field in the target repo.
 - **`[stack: <name>]`** — tasks sharing a stack name are branched and PR'd in sequence (each targets the previous branch); tasks with no annotation are treated as continuing the previous task's stack. `solo` is a reserved name and the one exception: every `solo`-tagged task, including an unannotated task that inherits `solo` via the fallback rule above, branches from `main` and PRs to `main` independently, never chained to other `solo` tasks, no matter how many share the tag. Assign these during `/plan-tasks`, not by hand.
-- **Numbering** — every task checkbox is numbered continuously down the file (across all sections, not restarting each section), so a task always has a stable-for-this-session number to reference — e.g. with `overnight.sh`'s `--stop-after`/`--stack` flags, or just in conversation. Numbers shift if tasks above are added, removed, or archived, same as any other line in the file; `/plan-tasks` and housekeeping keep them in order when they edit `TASKS.md`. `Discovered` entries aren't numbered — they're one-line notes, not planned tasks, until a human triages them into a numbered section.
 
 ## What you get in the morning
 
 - One PR per task, each targeting either `main` or the previous branch in its stack.
-- One `chore: session housekeeping <date>` PR that updates `TASKS.md` and adds `docs/tasks-archive/<date>.md` — the only PR that touches either.
+- One `chore: session housekeeping <date>` PR that updates `TASKS.md`, adds `docs/tasks-archive/<date>.md`, and updates the `tasksCompleted`/`tasksBlocked` counts in `docs/nightlight-meta.json` — the only PR that touches any of the three.
 - Anything the agent couldn't finish is annotated `NEEDS HUMAN: <steps>` (env vars, API keys, dashboard config) or `blocked: <reason>` (judgment calls, missing context) directly in `TASKS.md`, and in the relevant PR description.
 
 Merge stacks bottom-up. Merge solos and housekeeping whenever.

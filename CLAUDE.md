@@ -15,14 +15,20 @@ This repo is tooling for unattended overnight sessions against target repos. Whe
 
 ### Branching & PRs
 
-- Each task in the target repo's TASKS.md carries a [stack: <name>] annotation assigned during planning. `solo` is a reserved name for genuinely independent tasks (see below) — never invent other names meaning "no dependencies," use `solo`.
+- Each task in the target repo's TASKS.md carries a leading `#<n>` number (assigned during planning, never reused, stable across edits — see "Task numbering" below) and a `[stack: <name>]` annotation. `solo` is a reserved name for genuinely independent tasks (see below) — never invent other names meaning "no dependencies," use `solo`.
 - Tasks sharing a stack name, other than `solo`, are STACKED in file order: the first branches from main, each subsequent from the tip of the previous. Their PRs target the predecessor branch (first targets main).
 - `solo` is exempt from the stacking rule above: every task tagged `solo` branches from main independently and its PR targets main, no matter how many other tasks share the `solo` tag in the same session. Solo tasks are never chained to each other.
 - If a task has NO stack annotation, treat it as part of the same stack as the previous task (stack-by-default is the safe fallback) — this includes inheriting `solo` (and its exemption from stacking) if that's what the previous task was tagged.
 - If during implementation a task turns out to depend on work in another stack, STOP that task, annotate it blocked with the reason, and move on. Do not silently re-stack.
-- Branch naming: overnight/<YYYY-MM-DD>/<NN>-<task-slug> (NN = order in the stack). One task = one branch = one PR. Within a task, commit in logical, revertable chunks.
-- Task branches NEVER modify TASKS.md or anything in docs/tasks-archive/. Record progress in commit messages.
+- Branch naming: `overnight/<YYYY-MM-DD>/<NN>-<task-slug>` (NN = order in the stack). One task = one branch = one PR. Within a task, commit in logical, revertable chunks.
+- Task branches NEVER modify TASKS.md, `docs/nightlight-meta.json`, or anything in `docs/tasks-archive/`. Record progress in commit messages.
 - Never push to main. Never merge.
+
+### Task numbering
+
+- Every task gets a leading `#<n>` token right after its checkbox — e.g. `- [ ] #48 [stack: auth] Add rate limiting to login endpoint` — assigned during planning (`/plan-tasks`), never during a work session. Applies to every section (Agent-Ready, Verify, Research, Decisions), not just Agent-Ready.
+- Numbers come from `docs/nightlight-meta.json`'s `nextTaskNumber` field in the target repo and increment monotonically — never reused, never renumbered, even after a task is completed and removed from TASKS.md. This is what lets a PR, commit, or `## Discovered` note reference a specific task unambiguously after it's been archived.
+- Do not assign or renumber task numbers during a work session — that's `/plan-tasks`'s job, same as stack annotations.
 
 ### Quality gates
 
@@ -38,15 +44,15 @@ This repo is tooling for unattended overnight sessions against target repos. Whe
 ### TASKS.md maintenance
 
 - TASKS.md at the target repo root contains only open, blocked, or in-progress items. It has exactly one writer per session: the housekeeping branch.
-- At session end, create overnight/<YYYY-MM-DD>/housekeeping from main and make one commit that: checks off / removes completed tasks from TASKS.md; adds NEEDS HUMAN and blocked annotations accumulated during the session; adds Discovered items; writes completed tasks to a NEW file docs/tasks-archive/<YYYY-MM-DD>.md (never append to an existing archive file), each entry with task text, PR number, and notes.
-- Open this as its own PR titled "chore: session housekeeping <date>", targeting main. This is the only PR that touches TASKS.md or the archive, so task PRs merge in any order across any number of nights with zero conflicts.
-- If a task is code-complete but requires human steps for end-to-end functionality (env var, API key, dashboard config), it stays in TASKS.md annotated "NEEDS HUMAN: <exact steps>" (via housekeeping) and the same note goes in the task PR description. Still open the PR.
+- At session end, create `overnight/<YYYY-MM-DD>/housekeeping` from main and make one commit that: checks off / removes completed tasks from TASKS.md; adds NEEDS HUMAN and blocked annotations accumulated during the session; adds Discovered items; writes completed tasks (with their task number) to a NEW file `docs/tasks-archive/<YYYY-MM-DD>.md` (never append to an existing archive file), each entry with task number, task text, PR number, and notes; updates `tasksCompleted` and `tasksBlocked` in `docs/nightlight-meta.json` to reflect the session (create the file with `nextTaskNumber: 1, tasksCompleted: 0, tasksBlocked: 0` if it doesn't exist yet).
+- Open this as its own PR titled `chore: session housekeeping <date>`, targeting main. This is the only PR that touches TASKS.md, `docs/nightlight-meta.json`, or the archive, so task PRs merge in any order across any number of nights with zero conflicts.
+- If a task is code-complete but requires human steps for end-to-end functionality (env var, API key, dashboard config), it stays in TASKS.md annotated `NEEDS HUMAN: <exact steps>` (via housekeeping) and the same note goes in the task PR description. Still open the PR.
 - If a task is ambiguous or blocked for non-human reasons, annotate why (via housekeeping), skip it, move on. Never guess on judgment calls.
 
 ### Research deliverables
 
 - Every Research task produces a markdown document as its deliverable. That document IS the PR; a research task with no .md output is incomplete.
-- Location: the path specified in the task, defaulting to docs/research/<topic>.md in the target repo.
+- Location: the path specified in the task, defaulting to `docs/research/<topic>.md` in the target repo.
 - Structure: ## Summary (2-3 sentences), ## Findings, ## Recommendation (clearly marked as recommendation, not decision), ## Open Questions, ## Sources.
 - Cite sources with links. If web access is unavailable or a claim can't be verified, say so explicitly in the doc. Never fabricate sources, prices, API limits, or version numbers.
 - Research PRs touch only docs/; no code changes, no default changes, no new dependencies.

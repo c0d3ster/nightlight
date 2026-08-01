@@ -4,8 +4,8 @@
 #   without:   run every repo under PROJECT_REPOS_DIR that has open TASKS.md work
 #
 # flags (compose with the base prompt, they don't replace it):
-#   --stop-after N        only complete tasks numbered 1..N (continuous numbering
-#                          down TASKS.md, see README), then stop.
+#   --stop-after N        only complete the first N open tasks in TASKS.md
+#                          (file order, across all sections), then stop.
 #   --stack <name>        only work tasks annotated [stack: <name>], skip every
 #                          other stack this run.
 #   --extra-instructions "<text>"
@@ -50,7 +50,7 @@ else
   if [[ -n "$STOP_AFTER" ]]; then
     PROMPT="$PROMPT
 
-IMPORTANT - special instructions for this run: only complete tasks numbered 1 through $STOP_AFTER in TASKS.md (continuous numbering down the file, across all sections). Do not start any task numbered higher than $STOP_AFTER. Still perform the end-of-session housekeeping for whatever you completed."
+IMPORTANT - special instructions for this run: only complete the first $STOP_AFTER open tasks you encounter in TASKS.md, in file order across all sections (this is a count, not a reference to a task's permanent #<n> number). Do not start a ($STOP_AFTER + 1)th task. Still perform the end-of-session housekeeping for whatever you completed."
   fi
   if [[ -n "$STACK" ]]; then
     PROMPT="$PROMPT
@@ -70,7 +70,7 @@ run_repo() {
   local tasks="$repo_path/TASKS.md"
 
   [[ -f "$tasks" ]] || { echo "skip: $name (no TASKS.md)"; return 0; }
-  grep -Eq '^\s*[0-9]+\.\s*\[ \]' "$tasks" || { echo "skip: $name (no open tasks)"; return 0; }
+  grep -Eq '^\s*- \[ \]' "$tasks" || { echo "skip: $name (no open tasks)"; return 0; }
 
   echo "=== $name ==="
   git -C "$repo_path" checkout main && git -C "$repo_path" pull
@@ -90,6 +90,40 @@ run_repo() {
     | tee "$raw_log" \
     | jq -r -f format-stream.jq \
     | tee "$readable_log"
+
+  update_stats "$name" "$raw_log"
+}
+
+# Rolls this run's cost/duration/turns (from the stream's closing "result"
+# event) into stats/<repo>.json's running totals. Local-only, gitignored —
+# never committed, never touches the target repo.
+update_stats() {
+  local name="$1" raw_log="$2"
+  mkdir -p stats
+  local stats_file="stats/$name.json"
+  local result_line; result_line="$(jq -c 'select(.type == "result")' "$raw_log" | tail -n1)"
+  if [[ -z "$result_line" ]]; then
+    echo "warn: no result event in $raw_log, skipping stats update"
+    return 0
+  fi
+  local prev_json="{}"
+  [[ -f "$stats_file" ]] && prev_json="$(cat "$stats_file")"
+  jq -n \
+    --argjson prev "$prev_json" \
+    --argjson result "$result_line" \
+    --arg date "$(date +%F)" \
+    '{
+      sessions: (($prev.sessions // 0) + 1),
+      total_cost_usd: (($prev.total_cost_usd // 0) + $result.total_cost_usd),
+      total_duration_s: (($prev.total_duration_s // 0) + ($result.duration_ms / 1000 | floor)),
+      total_turns: (($prev.total_turns // 0) + $result.num_turns),
+      lastRun: {
+        date: $date,
+        cost_usd: $result.total_cost_usd,
+        duration_s: ($result.duration_ms / 1000 | floor),
+        num_turns: $result.num_turns
+      }
+    }' > "$stats_file"
 }
 
 if [[ -n "$REPO" ]]; then
