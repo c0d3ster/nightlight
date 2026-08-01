@@ -10,6 +10,7 @@ git pull --quiet || echo "warn: could not pull latest nightlight rules, running 
 
 set -a; source .env; set +a
 : "${PROJECT_REPOS_DIR:?PROJECT_REPOS_DIR not set in .env}"
+command -v jq >/dev/null || { echo "jq is required (see README Requirements)"; exit 1; }
 
 PROMPT='A target repo has been added to this session via --add-dir. Read TASKS.md in that target repo and run an overnight session per the "Overnight Agent Workflow" rules in CLAUDE.md. Work through ALL Agent-Ready, Verify, and Research items in order. Do not stop until every item in those sections is either complete, annotated NEEDS HUMAN, or annotated blocked. Then do the end-of-session housekeeping. Only after all of that is the session over.'
 
@@ -25,12 +26,20 @@ run_repo() {
   git -C "$repo_path" checkout main && git -C "$repo_path" pull
 
   mkdir -p logs
+  local raw_log="logs/$name-$(date +%F).jsonl"
+  local readable_log="logs/$name-$(date +%F).log"
+  local errlog="logs/$name-$(date +%F).stderr.log"
   claude -p "$PROMPT" \
     --model sonnet \
     --permission-mode acceptEdits \
     --settings .claude/settings.json \
     --add-dir "$repo_path" \
-    2>&1 | tee "logs/$name-$(date +%F).log"
+    --output-format stream-json \
+    --verbose \
+    2>"$errlog" \
+    | tee "$raw_log" \
+    | jq -r -f format-stream.jq \
+    | tee "$readable_log"
 }
 
 if [[ -n "$1" ]]; then

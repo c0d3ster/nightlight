@@ -16,6 +16,7 @@ This repo holds the runner and its config — nothing else. No dependencies, no 
 - [Claude Code](https://docs.claude.com/en/docs/claude-code) CLI, logged in.
 - [pnpm](https://pnpm.io) — used only as a task runner here (`pnpm plan`, `pnpm overnight`), no actual dependencies to install.
 - Git, GitHub CLI (`gh`) authenticated for the target repo.
+- [`jq`](https://jqlang.org) — formats the live session output (see Usage below). Install instructions for every platform: [jqlang.org/download](https://jqlang.org/download).
 - A target repo with a `TASKS.md` at its root (see format below) and a `CLAUDE.md` with your test command and conventions.
 
 ## Configuration
@@ -117,7 +118,11 @@ Thin `package.json` wrappers around the two shell scripts — no dependencies, n
 
 Only run one repo at a time per machine (shared usage pool). Chain sequentially if you need more than one: `./overnight.sh repo-a && ./overnight.sh repo-b`.
 
-Output is teed to `logs/<repo>-<date>.log`, gitignored — `tail -f` that file in another terminal to watch the session live. The agent opens one PR per task as it finishes, so the moment you see a `gh pr create` line (or a new PR shows up via `gh pr list` in the target repo) is your signal that task is done and ready to check, rather than waiting for the whole run to finish.
+`overnight.sh` runs `claude -p` with `--output-format stream-json`, so the session's events (assistant text, tool calls, tool results) arrive incrementally rather than all at once at the end. Each line is piped through `format-stream.jq`, so the terminal you launched `overnight.sh` from shows clean, readable progress live — no separate `tail -f` needed. The agent opens one PR per task as it finishes, so a `gh pr create` call showing up in that live output is your signal that task is done and ready to check, rather than waiting for the whole run to finish.
+
+Three files land in `logs/`, all gitignored: `<repo>-<date>.jsonl` (the raw NDJSON event stream, unformatted, kept for later inspection or tooling), `<repo>-<date>.log` (the same `format-stream.jq` output shown live in your terminal, saved as-is), and `<repo>-<date>.stderr.log` (anything the `claude` process wrote to stderr, kept separate so it doesn't break the JSON stream).
+
+Switching to `stream-json` only changes how the CLI reports events to us locally — it doesn't change what the agent does or what it costs. The final `result` event includes `total_cost_usd` for the whole session, which `format-stream.jq` prints as the closing summary line.
 
 ## Behavior notes
 
