@@ -1,3 +1,4 @@
 logs/
+stats/
 .env
 node_modules/
