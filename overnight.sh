@@ -26,7 +26,8 @@ run_repo() {
   git -C "$repo_path" checkout main && git -C "$repo_path" pull
 
   mkdir -p logs
-  local log="logs/$name-$(date +%F).jsonl"
+  local raw_log="logs/$name-$(date +%F).jsonl"
+  local readable_log="logs/$name-$(date +%F).log"
   local errlog="logs/$name-$(date +%F).stderr.log"
   claude -p "$PROMPT" \
     --model sonnet \
@@ -36,8 +37,9 @@ run_repo() {
     --output-format stream-json \
     --verbose \
     2>"$errlog" \
-    | tee "$log" \
-    | jq -r -f format-stream.jq
+    | tee "$raw_log" \
+    | jq -r -f format-stream.jq \
+    | tee "$readable_log"
 }
 
 if [[ -n "$1" ]]; then
