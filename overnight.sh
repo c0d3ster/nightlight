@@ -73,6 +73,19 @@ IMPORTANT - special instructions for this run: $EXTRA_INSTRUCTIONS"
   fi
 fi
 
+# Resolves a repo's default branch (main, master, or whatever origin/HEAD
+# points to) so run_repo works on repos that never migrated off master.
+default_branch() {
+  local repo_path="$1"
+  local ref
+  ref="$(git -C "$repo_path" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null)" \
+    && { echo "${ref#origin/}"; return 0; }
+  git -C "$repo_path" show-ref --verify --quiet refs/heads/main && { echo main; return 0; }
+  git -C "$repo_path" show-ref --verify --quiet refs/heads/master && { echo master; return 0; }
+  echo "error: could not determine default branch for $repo_path (no origin/HEAD, no main, no master)" >&2
+  return 1
+}
+
 run_repo() {
   local repo_path="$1"
   local name; name="$(basename "$repo_path")"
@@ -82,7 +95,8 @@ run_repo() {
   grep -Eq '^\s*- \[ \]' "$tasks" || { echo "skip: $name (no open tasks)"; return 0; }
 
   echo "=== $name ==="
-  git -C "$repo_path" checkout main && git -C "$repo_path" pull
+  local branch; branch="$(default_branch "$repo_path")" || return 1
+  git -C "$repo_path" checkout "$branch" && git -C "$repo_path" pull
 
   mkdir -p logs
   local raw_log="logs/$name-$(date +%F).jsonl"
