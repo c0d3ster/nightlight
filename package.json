@@ -1,9 +1,9 @@
 {
   "name": "nightlight",
   "private": true,
-  "description": "Runner for unattended Claude Code sessions against a repo's TASKS.md",
+  "description": "Leave a light on while you sleep. Unattended Claude Code sessions that turn TASKS.md queues into reviewable PRs, with explicit permission allowlists and no unreviewed merges.",
   "scripts": {
-    "plan": "./plan.sh",
-    "overnight": "./overnight.sh"
+    "plan": "bash plan.sh",
+    "overnight": " bash overnight.sh"
   }
 }
