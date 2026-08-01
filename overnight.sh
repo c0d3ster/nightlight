@@ -6,6 +6,8 @@
 # flags (compose with the base prompt, they don't replace it):
 #   --stop-after N        only complete tasks through #N (each task's permanent
 #                          number, not a count or file position), then stop.
+#   --limit N             only complete N tasks this run (a count, not a task
+#                          number), then stop.
 #   --stack <name>        only work tasks annotated [stack: <name>], skip every
 #                          other stack this run.
 #   --extra-instructions "<text>"
@@ -26,6 +28,7 @@ command -v jq >/dev/null || { echo "jq is required (see README Requirements)"; e
 
 REPO=""
 STOP_AFTER=""
+LIMIT=""
 STACK=""
 EXTRA_INSTRUCTIONS=""
 OVERRIDE_PROMPT=""
@@ -33,6 +36,7 @@ OVERRIDE_PROMPT=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --stop-after) STOP_AFTER="$2"; shift 2 ;;
+    --limit) LIMIT="$2"; shift 2 ;;
     --stack) STACK="$2"; shift 2 ;;
     --extra-instructions) EXTRA_INSTRUCTIONS="$2"; shift 2 ;;
     --override-prompt) OVERRIDE_PROMPT="$2"; shift 2 ;;
@@ -51,6 +55,11 @@ else
     PROMPT="$PROMPT
 
 IMPORTANT - special instructions for this run: only complete tasks up through and including task #$STOP_AFTER (each task's permanent #<n> number, not a count or its position in the file). Do not start any task numbered higher than #$STOP_AFTER. Still perform the end-of-session housekeeping for whatever you completed."
+  fi
+  if [[ -n "$LIMIT" ]]; then
+    PROMPT="$PROMPT
+
+IMPORTANT - special instructions for this run: only complete $LIMIT task(s) this run (a count, not a task number). Stop after finishing the $LIMIT-th task, whichever tasks those turn out to be in file order. Still perform the end-of-session housekeeping for whatever you completed."
   fi
   if [[ -n "$STACK" ]]; then
     PROMPT="$PROMPT
@@ -131,7 +140,7 @@ if [[ -n "$REPO" ]]; then
   [[ -d "$TARGET" ]] || TARGET="$PROJECT_REPOS_DIR/$TARGET"
   run_repo "$TARGET"
 else
-  [[ -z "$STOP_AFTER$STACK$EXTRA_INSTRUCTIONS$OVERRIDE_PROMPT" ]] || { echo "run flags require a single target repo"; exit 1; }
+  [[ -z "$STOP_AFTER$LIMIT$STACK$EXTRA_INSTRUCTIONS$OVERRIDE_PROMPT" ]] || { echo "run flags require a single target repo"; exit 1; }
   for d in "$PROJECT_REPOS_DIR"/*/; do
     run_repo "${d%/}"
   done

@@ -148,11 +148,16 @@ Flags scope a single run without editing `TASKS.md` or `CLAUDE.md`. They *append
 
 ```bash
 ./overnight.sh some-repo --stop-after 27     # complete through task #27, then stop
+./overnight.sh some-repo --limit 3           # complete 3 tasks this run, then stop
 ./overnight.sh some-repo --stack auth        # only tasks in [stack: auth], skip every other stack
 ./overnight.sh some-repo --extra-instructions "double check the migration is reversible"
 ```
 
-`--stop-after N` refers to a task's permanent `#<n>` number (see TASKS.md format below), not a count and not a position in the file. The agent works through tasks in file order and stops once it's completed task `#N`, without starting anything numbered higher — since numbers only increase down the file as tasks are added, this reliably targets one specific task, unlike a position-based count that would silently point somewhere else the moment an earlier task gets archived. Flags require a single target repo — they're rejected in the no-arg "run every repo" mode, since scoping to one task/stack across multiple unrelated repos isn't a coherent request.
+`--stop-after N` refers to a task's permanent `#<n>` number (see TASKS.md format below), not a count and not a position in the file. The agent works through tasks in file order and stops once it's completed task `#N`, without starting anything numbered higher — since numbers only increase down the file as tasks are added, this reliably targets one specific task, unlike a position-based count that would silently point somewhere else the moment an earlier task gets archived.
+
+`--limit N` is the count-based counterpart: stop after completing N tasks this run, whatever their numbers happen to be. Use `--stop-after` when you want a specific task as the boundary; use `--limit` when you just want "do a few and stop." The two flags are deliberately separate rather than one overloaded flag (e.g. `5` vs `#5`) — a bare number is ambiguous between "a count" and "a task number," and that ambiguity is exactly the kind of silent-wrong-behavior risk this tool should avoid in an unattended run.
+
+Flags require a single target repo — they're rejected in the no-arg "run every repo" mode, since scoping to one task/stack across multiple unrelated repos isn't a coherent request.
 
 There's also `--override-prompt "<text>"`, which replaces the base prompt entirely instead of appending to it. Reach for the flags above first — an override loses the housekeeping and workflow-rules framing unless `<text>` restates it.
 
