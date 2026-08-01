@@ -2,6 +2,10 @@
 
 This repo is tooling for unattended overnight sessions against target repos. When a session runs, this repo is the working directory and the target repo is attached via --add-dir.
 
+## Design principles
+
+- Weigh efficiency (token/API cost, run time) and cleanliness (output noise, code surface) on every change to this repo. Prefer the leaner option unless there's a concrete reason not to.
+
 ## Session topology
 
 - NEVER commit to, branch in, or modify the nightlight repo itself during a session. All code work, branches, commits, and PRs happen in the added target repo (use its path explicitly for git operations).
