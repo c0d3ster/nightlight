@@ -169,7 +169,7 @@ Switching to `stream-json` only changes how the CLI reports events to us locally
 - **Verify** — confirmed or implemented, whichever the codebase needs.
 - **Research** — produces a markdown doc, never touches code.
 - **Decisions (human only)** — never attempted by the agent.
-- **`[stack: <name>]`** — tasks sharing a stack name are branched and PR'd in sequence (each targets the previous branch); tasks with no annotation are treated as continuing the previous task's stack. Assign these during `/plan-tasks`, not by hand.
+- **`[stack: <name>]`** — tasks sharing a stack name are branched and PR'd in sequence (each targets the previous branch); tasks with no annotation are treated as continuing the previous task's stack. `solo` is a reserved name and the one exception: every `solo`-tagged task branches from `main` and PRs to `main` independently, never chained to other `solo` tasks, no matter how many share the tag. Assign these during `/plan-tasks`, not by hand.
 - **Numbering** — every task checkbox is numbered continuously down the file (across all sections, not restarting each section), so a task always has a stable-for-this-session number to reference — e.g. with `overnight.sh`'s `--stop-after`/`--stack` flags, or just in conversation. Numbers shift if tasks above are added, removed, or archived, same as any other line in the file; `/plan-tasks` and housekeeping keep them in order when they edit `TASKS.md`. `Discovered` entries aren't numbered — they're one-line notes, not planned tasks, until a human triages them into a numbered section.
 
 ## What you get in the morning

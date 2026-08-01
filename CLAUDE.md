@@ -15,10 +15,10 @@ This repo is tooling for unattended overnight sessions against target repos. Whe
 
 ### Branching & PRs
 
-- Each task in the target repo's TASKS.md carries a [stack: <name>] annotation assigned during planning.
-- Tasks sharing a stack name are STACKED in file order: the first branches from main, each subsequent from the tip of the previous. Their PRs target the predecessor branch (first targets main).
-- Tasks with a unique stack name (e.g. solo) branch from main and their PRs target main.
-- If a task has NO stack annotation, treat it as part of the same stack as the previous task (stack-by-default is the safe fallback).
+- Each task in the target repo's TASKS.md carries a [stack: <name>] annotation assigned during planning. `solo` is a reserved name for genuinely independent tasks (see below) — never invent other names meaning "no dependencies," use `solo`.
+- Tasks sharing a stack name, other than `solo`, are STACKED in file order: the first branches from main, each subsequent from the tip of the previous. Their PRs target the predecessor branch (first targets main).
+- `solo` is exempt from the stacking rule above: every task tagged `solo` branches from main independently and its PR targets main, no matter how many other tasks share the `solo` tag in the same session. Solo tasks are never chained to each other.
+- If a task has NO stack annotation, treat it as part of the same stack as the previous task (stack-by-default is the safe fallback) — this includes inheriting `solo` (and its exemption from stacking) if that's what the previous task was tagged.
 - If during implementation a task turns out to depend on work in another stack, STOP that task, annotate it blocked with the reason, and move on. Do not silently re-stack.
 - Branch naming: overnight/<YYYY-MM-DD>/<NN>-<task-slug> (NN = order in the stack). One task = one branch = one PR. Within a task, commit in logical, revertable chunks.
 - Task branches NEVER modify TASKS.md or anything in docs/tasks-archive/. Record progress in commit messages.
