@@ -7,7 +7,7 @@ This repo holds the runner and its config — nothing else. No dependencies, no 
 ## How it works
 
 - `overnight.sh` points at a target repo, checks it has a `TASKS.md`, and launches `claude -p` with `--add-dir <target-repo>`.
-- Because the session is launched from *this* repo, its `CLAUDE.md` (the workflow rules), `.claude/settings.json` (the permission allowlist), and `.claude/commands/` (the `/plan-tasks` command) all apply — regardless of which repo got added.
+- Because the session is launched from *this* repo, its `CLAUDE.md` (the workflow rules), `.claude/settings.json` (the permission allowlist), and `.claude/skills/plan-tasks/` (the `/plan-tasks` skill) all apply — regardless of which repo got added.
 - The target repo's own `CLAUDE.md` stays exactly what it'd be without this system: test command, code conventions. No overnight-specific content ever gets written into it.
 - The agent works entirely on `overnight/<date>/*` branches, opens a PR per task, and a single housekeeping PR at the end updates `TASKS.md` and the archive. Nothing else touches those two things.
 
@@ -64,22 +64,28 @@ This adds the target repo *and* submits `/plan-tasks` as the session's first mes
 
 Or via the `package.json` script (see Scripts below): `pnpm plan some-repo`.
 
-## .claude/commands/plan-tasks.md
+## .claude/skills/plan-tasks/SKILL.md
 
-The `/plan-tasks` command does the task breakdown that makes the overnight run actually work — `overnight.sh` executes a queue, it doesn't design one. Run this before every session, any time `TASKS.md` has new or vague items in it.
+The `/plan-tasks` skill does the task breakdown that makes the overnight run actually work — `overnight.sh` executes a queue, it doesn't design one. Run this before every session, any time `TASKS.md` has new or vague items in it.
 
 ```markdown
-Read TASKS.md and CLAUDE.md. For each unchecked Agent-Ready item:
-1. Investigate the relevant parts of the codebase.
+---
+name: plan-tasks
+description: Plans and stack-annotates a target repo's TASKS.md. Use when starting a planning session to break down Agent-Ready tasks, assign [stack] annotations, and flag prerequisites before an overnight run.
+disable-model-invocation: true
+---
+
+A target repo is attached to this session via --add-dir. Read its TASKS.md and its CLAUDE.md. For each unchecked Agent-Ready item:
+
+1. Investigate the relevant parts of the target repo's codebase.
 2. Propose a sub-task breakdown with file-level hints and any missing acceptance criteria.
 3. Flag missing prerequisites (fixtures, env vars, dependencies) as NEEDS HUMAN annotations.
-4. Analyze dependencies AND shared-file overlap between tasks (schemas, barrel exports,
-   shared components), then propose a [stack: <name>] annotation for every task: tasks
-   that depend on each other or touch the same files share a stack name in execution
-   order; genuinely independent tasks get [stack: solo]. When in doubt, stack.
-Present the full proposal for my approval BEFORE writing anything. After approval, write
-the breakdowns and [stack] annotations into TASKS.md. Do not implement anything.
+4. Analyze dependencies AND shared-file overlap between tasks (schemas, barrel exports, shared components), then propose a [stack: <name>] annotation for every task: tasks that depend on each other or touch the same files share a stack name in execution order; genuinely independent tasks get [stack: solo]. When in doubt, stack.
+
+Present the full proposal for my approval BEFORE writing anything. After I approve, write the breakdowns and [stack] annotations into the target repo's TASKS.md. Do not implement any code in this session.
 ```
+
+Skills live in a named folder with a `SKILL.md` inside (not a flat `.md` file directly under `.claude/skills/`) — that's the format Claude Code actually discovers. `disable-model-invocation: true` means it only runs when explicitly called via `/plan-tasks`, never auto-triggered.
 
 It matters for two reasons:
 
