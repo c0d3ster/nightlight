@@ -4,8 +4,8 @@
 #   without:   run every repo under PROJECT_REPOS_DIR that has open TASKS.md work
 #
 # flags (compose with the base prompt, they don't replace it):
-#   --stop-after N        only complete the first N open tasks in TASKS.md
-#                          (file order, across all sections), then stop.
+#   --stop-after N        only complete tasks through #N (each task's permanent
+#                          number, not a count or file position), then stop.
 #   --stack <name>        only work tasks annotated [stack: <name>], skip every
 #                          other stack this run.
 #   --extra-instructions "<text>"
@@ -50,7 +50,7 @@ else
   if [[ -n "$STOP_AFTER" ]]; then
     PROMPT="$PROMPT
 
-IMPORTANT - special instructions for this run: only complete the first $STOP_AFTER open tasks you encounter in TASKS.md, in file order across all sections (this is a count, not a reference to a task's permanent #<n> number). Do not start a ($STOP_AFTER + 1)th task. Still perform the end-of-session housekeeping for whatever you completed."
+IMPORTANT - special instructions for this run: only complete tasks up through and including task #$STOP_AFTER (each task's permanent #<n> number, not a count or its position in the file). Do not start any task numbered higher than #$STOP_AFTER. Still perform the end-of-session housekeeping for whatever you completed."
   fi
   if [[ -n "$STACK" ]]; then
     PROMPT="$PROMPT

@@ -147,12 +147,12 @@ Only run one repo at a time per machine (shared usage pool). Chain sequentially 
 Flags scope a single run without editing `TASKS.md` or `CLAUDE.md`. They *append* to the base prompt rather than replacing it, so the workflow rules, quality gates, and end-of-session housekeeping still apply — only the task scope changes.
 
 ```bash
-./overnight.sh some-repo --stop-after 3      # only the first 3 open tasks (file order), then stop
+./overnight.sh some-repo --stop-after 27     # complete through task #27, then stop
 ./overnight.sh some-repo --stack auth        # only tasks in [stack: auth], skip every other stack
 ./overnight.sh some-repo --extra-instructions "double check the migration is reversible"
 ```
 
-`--stop-after N` counts open tasks from the top of `TASKS.md` in file order, across all sections — it's a count, not a reference to a task's `#<n>` (that number is permanent and generally won't start at 1, so "stop after 3" means "the first 3 you encounter tonight," not "stop at task #3"). Flags require a single target repo — they're rejected in the no-arg "run every repo" mode, since scoping to one task/stack across multiple unrelated repos isn't a coherent request.
+`--stop-after N` refers to a task's permanent `#<n>` number (see TASKS.md format below), not a count and not a position in the file. The agent works through tasks in file order and stops once it's completed task `#N`, without starting anything numbered higher — since numbers only increase down the file as tasks are added, this reliably targets one specific task, unlike a position-based count that would silently point somewhere else the moment an earlier task gets archived. Flags require a single target repo — they're rejected in the no-arg "run every repo" mode, since scoping to one task/stack across multiple unrelated repos isn't a coherent request.
 
 There's also `--override-prompt "<text>"`, which replaces the base prompt entirely instead of appending to it. Reach for the flags above first — an override loses the housekeeping and workflow-rules framing unless `<text>` restates it.
 
