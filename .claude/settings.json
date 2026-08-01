@@ -1,0 +1,42 @@
+{
+  "permissions": {
+    "allow": [
+      "Edit",
+      "Bash(npm test:*)",
+      "Bash(npm run test:*)",
+      "Bash(npm run lint:*)",
+      "Bash(npm run build:*)",
+      "Bash(pnpm test:*)",
+      "Bash(pnpm lint:*)",
+      "Bash(pnpm build:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git checkout:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git -C * add:*)",
+      "Bash(git -C * commit:*)",
+      "Bash(git -C * checkout:*)",
+      "Bash(git -C * status:*)",
+      "Bash(git -C * diff:*)",
+      "Bash(git -C * log:*)",
+      "Bash(git push origin overnight/*)",
+      "Bash(git -C * push origin overnight/*)",
+      "Bash(gh pr create:*)"
+    ],
+    "deny": [
+      "Bash(git push origin main:*)",
+      "Bash(git push origin master:*)",
+      "Bash(git -C * push origin main:*)",
+      "Bash(git -C * push origin master:*)",
+      "Bash(git merge:*)",
+      "Bash(git -C * merge:*)",
+      "Bash(rm -rf:*)",
+      "Read(.env)",
+      "Read(.env.*)",
+      "Bash(git commit --no-verify:*)",
+      "Bash(git -C * commit --no-verify:*)"
+    ]
+  }
+}
