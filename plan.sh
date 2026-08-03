@@ -11,9 +11,4 @@ set -a; source .env; set +a
 REPO="${1:?usage: plan.sh <repo>}"
 [[ -d "$REPO" ]] || REPO="$PROJECT_REPOS_DIR/$REPO"
 
-if [[ "$(cd "$REPO" && pwd)" == "$(pwd)" ]]; then
-  # planning nightlight itself: it's already the working directory, no --add-dir needed
-  MSYS_NO_PATHCONV=1 claude "/plan-tasks"
-else
-  MSYS_NO_PATHCONV=1 claude "/plan-tasks" --add-dir "$REPO"
-fi
+MSYS_NO_PATHCONV=1 claude  "/plan-tasks" --add-dir "$REPO"
