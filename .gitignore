@@ -2,3 +2,4 @@ logs/
 stats/
 .env
 node_modules/
+.claude/worktrees/
