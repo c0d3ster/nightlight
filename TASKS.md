@@ -50,3 +50,9 @@ This is nightlight working on itself: the target repo for these tasks is the nig
 
 - [ ] #8 **Decide whether to layer `--permission-mode auto` under the existing allowlist, or hold at `acceptEdits`**
   Depends on the Verify task above confirming eligibility. If eligible, decide whether to add `auto` mode as an additional safety layer underneath the existing `.claude/settings.json` allow/deny list, or hold at current `acceptEdits` behavior. Note: do not adopt a `bypassPermissions`-style fallback under any circumstance — if `auto` isn't available, staying on `acceptEdits` plus the explicit list is the safer posture.
+
+## Discovered
+
+- [ ] Implement overnight.sh pause/resume-on-new-window (5-hour usage block) feature, using `rate_limit_event.rate_limit_info.resetsAt` from `claude -p --output-format stream-json` output as the data source (confirmed via live test 2026-08-01) — no separate polling/estimation needed. Source: memory `five-hour-resume-data-source`.
+- [ ] Build the `task-scout` agent (`.claude/agents/task-scout.md`) that `discover-tasks --scan` dispatches — a project-scoped agent purpose-built for proposing well-scoped, Agent-Ready-shaped task candidates from codebase analysis (not a generic Explore/general-purpose dispatch). Source: memory `discover-tasks-scan-testing`.
+  - [ ] Once built, end-to-end test `discover-tasks --scan` — verify scan-sourced candidates get proposed alongside memory-sourced ones and land correctly as unchecked items under TASKS.md `## Discovered`.
