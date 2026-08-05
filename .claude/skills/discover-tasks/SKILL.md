@@ -4,15 +4,16 @@ description: Mines a target repo's own memory (and, with --scan, its codebase) f
 disable-model-invocation: true
 ---
 
-A target repo is attached to this session via --add-dir. This skill has two independent sourcing phases: memory-mining (always runs) and repo-scanning (only when invoked with `--scan`).
+A target repo is attached to this session via --add-dir — except when the target repo is nightlight itself (self-targeting), in which case there's no --add-dir at all: nightlight is already the session's primary working directory. This skill has two independent sourcing phases: memory-mining (always runs) and repo-scanning (only when invoked with `--scan`).
 
 Announce each phase to me in one line before starting it.
 
 ## Phase 1: locate memory
 
 1. Announce: "Scanning `<repo>`'s memory for task candidates."
-2. List `~/.claude/projects/` and find the entry whose name matches the target repo's absolute path with `:` and path separators replaced by `-`. That is the target repo's *own* memory folder — distinct from nightlight's, since memory is scoped to whatever directory was the session's primary working directory when it was written, not to add-dir targets. Confirm the match against the real listing rather than assuming the encoding.
-3. If no matching folder exists, or it has no MEMORY.md, say so plainly and skip to Phase 2 step 3 (repo-scan) or exit if `--scan` wasn't passed either.
+2. If self-targeting (no --add-dir — see preamble above): the target repo's own memory is simply this session's own memory, already loaded in context. Use its MEMORY.md directly and skip step 3 below.
+3. Otherwise: list `~/.claude/projects/` and find the entry whose name matches the target repo's absolute path with `:` and path separators replaced by `-`. That is the target repo's *own* memory folder — distinct from nightlight's, since memory is scoped to whatever directory was the session's primary working directory when it was written, not to add-dir targets. Confirm the match against the real listing rather than assuming the encoding.
+4. If no matching folder exists, or it has no MEMORY.md, say so plainly and skip to Phase 2 step 3 (repo-scan) or exit if `--scan` wasn't passed either.
 
 ## Phase 2: propose candidates
 

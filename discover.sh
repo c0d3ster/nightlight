@@ -15,4 +15,13 @@ REPO="${1:?usage: discover.sh <repo> [--scan]}"
 SCAN_FLAG=""
 [[ "$2" == "--scan" ]] && SCAN_FLAG=" --scan"
 
-MSYS_NO_PATHCONV=1 claude "/discover-tasks$SCAN_FLAG" --add-dir "$REPO"
+# self-targeting (nightlight discovering tasks on itself): resolve REPO and
+# compare against the current dir (already nightlight's root, per the cd above).
+# If they match, nightlight is already the primary working directory — skip
+# --add-dir instead of pointing it at itself, which is both redundant and the
+# source of "." vs "./" path-resolution flakiness observed in practice.
+if [[ "$(cd "$REPO" && pwd)" == "$(pwd)" ]]; then
+  MSYS_NO_PATHCONV=1 claude "/discover-tasks$SCAN_FLAG"
+else
+  MSYS_NO_PATHCONV=1 claude "/discover-tasks$SCAN_FLAG" --add-dir "$REPO"
+fi
