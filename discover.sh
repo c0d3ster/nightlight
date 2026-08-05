@@ -11,17 +11,11 @@ set -a; source .env; set +a
 
 REPO="${1:?usage: discover.sh <repo> [--scan]}"
 [[ -d "$REPO" ]] || REPO="$PROJECT_REPOS_DIR/$REPO"
+# resolve to an absolute path so "." and "./" (e.g. self-targeting nightlight
+# from inside its own directory) end up byte-identical before reaching --add-dir
+REPO="$(cd "$REPO" && pwd)"
 
 SCAN_FLAG=""
 [[ "$2" == "--scan" ]] && SCAN_FLAG=" --scan"
 
-# self-targeting (nightlight discovering tasks on itself): resolve REPO and
-# compare against the current dir (already nightlight's root, per the cd above).
-# If they match, nightlight is already the primary working directory — skip
-# --add-dir instead of pointing it at itself, which is both redundant and the
-# source of "." vs "./" path-resolution flakiness observed in practice.
-if [[ "$(cd "$REPO" && pwd)" == "$(pwd)" ]]; then
-  MSYS_NO_PATHCONV=1 claude "/discover-tasks$SCAN_FLAG"
-else
-  MSYS_NO_PATHCONV=1 claude "/discover-tasks$SCAN_FLAG" --add-dir "$REPO"
-fi
+MSYS_NO_PATHCONV=1 claude "/discover-tasks$SCAN_FLAG" --add-dir "$REPO"

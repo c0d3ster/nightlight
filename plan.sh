@@ -10,5 +10,8 @@ set -a; source .env; set +a
 
 REPO="${1:?usage: plan.sh <repo>}"
 [[ -d "$REPO" ]] || REPO="$PROJECT_REPOS_DIR/$REPO"
+# resolve to an absolute path so "." and "./" (e.g. self-targeting nightlight
+# from inside its own directory) end up byte-identical before reaching --add-dir
+REPO="$(cd "$REPO" && pwd)"
 
 MSYS_NO_PATHCONV=1 claude  "/plan-tasks" --add-dir "$REPO"
