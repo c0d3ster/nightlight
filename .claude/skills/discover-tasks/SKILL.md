@@ -6,6 +6,16 @@ disable-model-invocation: true
 
 A target repo is attached via --add-dir. Two independent sourcing phases: memory-mining (always runs) and repo-scanning (only with `--scan`).
 
+## Multi-repo mode
+
+Determine this from the attached directory's structure, never by assumption: does it have a `.git` at its own root?
+
+- Yes: it's a single target repo. Phases 1–4 below apply directly, exactly as written — this is today's behavior, unchanged.
+- No, but its immediate subdirectories do: the attached directory is `PROJECT_REPOS_DIR` itself, and the repo set is those subdirectories. Run this flow instead of a single Phases 1–4 pass:
+  1. Announce: "Found N repo(s) under `<dir>`."
+  2. Dispatch one `general-purpose` agent per repo — all in a single message, foreground, batched in groups of ~8 if there are more than that — each told to run Phase 1 + Phase 2 steps 1–3 for its one assigned repo (absolute path stated explicitly) and report back its candidate list (task text, rationale, source) — report only, never ask, never write. Use `general-purpose`, not `Plan`: a dispatch needs Agent-tool access itself to reach `task-scout` when `--scan` is passed, and `Plan`-type agents don't have that.
+  3. Once every dispatch returns, go through repos in the order they were listed. For each one: run Phase 2 step 4 (present its candidates, get my approval), then immediately Phase 3 (write) and Phase 4 (finalize) for that repo, before moving to the next.
+
 Announce each phase to me in one line before starting it.
 
 ## Phase 1: locate memory
@@ -42,5 +52,8 @@ Uncommitted content in the target repo's working tree is dangerous — lost work
 6. Commit as `chore(tasks): discover N candidate task(s)`, body listing each item and its memory source.
 7. Push, open a PR (`gh pr create`) targeting the default branch — title matches the commit, body summarizes the additions.
 8. Report the PR URL.
+9. Merge it: `gh pr merge <branch-name> --squash --delete-branch`, using the exact branch name from step 4 (not a PR number — that's what the scoped `chore/tasks-discover-*` merge permission matches against). This is safe specifically because every item going in was already explicitly approved by me in Phase 2 step 4 — the merge completes something already signed off on, it doesn't approve anything new.
+10. Merge command fails (e.g. branch protection requires a review)? Report the failure plainly and leave the PR open. Don't retry, don't force, don't fall back to raw `git merge` — that stays denied regardless.
+11. Merge succeeds: `git -C <repo> checkout` the default branch and pull latest, so the working tree's TASKS.md reflects the merge before this session ends — that's what lets a later `/plan-tasks` or `overnight.sh` run see these additions without anyone merging by hand.
 
 Do not implement any code in this session. Do not touch `docs/tasks-archive/` or `docs/nightlight-meta.json`.

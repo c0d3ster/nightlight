@@ -23,7 +23,9 @@
       "Bash(git -C * log:*)",
       "Bash(git push origin overnight/*)",
       "Bash(git -C * push origin overnight/*)",
-      "Bash(gh pr create:*)"
+      "Bash(gh pr create:*)",
+      "Bash(gh pr merge chore/tasks-discover-*:*)",
+      "Bash(gh pr merge chore/tasks-plan-*:*)"
     ],
     "deny": [
       "Bash(git push origin main:*)",
