@@ -153,11 +153,15 @@ Flags scope a single run without editing `TASKS.md` or `CLAUDE.md`. They *append
 ./overnight.sh some-repo --extra-instructions "double check the migration is reversible"
 ```
 
-`--stop-after N` refers to a task's permanent `#<n>` number (see TASKS.md format below), not a count and not a position in the file. The agent works through tasks in file order and stops once it's completed task `#N`, without starting anything numbered higher — since numbers only increase down the file as tasks are added, this reliably targets one specific task, unlike a position-based count that would silently point somewhere else the moment an earlier task gets archived.
+`--stop-after N` refers to a task's permanent `#<n>` number (see TASKS.md format below), not a count and not a position in the file. The agent works through tasks in file order and stops once it's completed task `#N`, without starting anything numbered higher — since numbers only increase down the file as tasks are added, this reliably targets one specific task, unlike a position-based count that would silently point somewhere else the moment an earlier task gets archived. Note this is a boundary check on the number, not a filter on the walk: if TASKS.md isn't in strict numeric order (e.g. `#5` was inserted above `#3`), the agent still works top-to-bottom, so it completes `#5` on the way to `#3` even though `5 > 3`.
 
 `--limit N` is the count-based counterpart: stop after completing N tasks this run, whatever their numbers happen to be. Use `--stop-after` when you want a specific task as the boundary; use `--limit` when you just want "do a few and stop." The two flags are deliberately separate rather than one overloaded flag (e.g. `5` vs `#5`) — a bare number is ambiguous between "a count" and "a task number," and that ambiguity is exactly the kind of silent-wrong-behavior risk this tool should avoid in an unattended run.
 
-Flags require a single target repo — they're rejected in the no-arg "run every repo" mode, since scoping to one task/stack across multiple unrelated repos isn't a coherent request.
+`--stop-after`, `--stack`, `--extra-instructions`, and `--override-prompt` require a single target repo — they're rejected in the no-arg "run every repo" mode, since scoping to one task number/stack/prompt across multiple unrelated repos isn't a coherent request. `--limit` is the exception: given with no repo, it applies independently to each repo's own session (first N tasks in that repo, in that repo's file order) rather than being a global count across all repos combined.
+
+```bash
+./overnight.sh --limit 2                     # every repo with open work, first 2 tasks each
+```
 
 There's also `--override-prompt "<text>"`, which replaces the base prompt entirely instead of appending to it. Reach for the flags above first — an override loses the housekeeping and workflow-rules framing unless `<text>` restates it.
 

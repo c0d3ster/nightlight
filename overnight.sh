@@ -7,7 +7,9 @@
 #   --stop-after N        only complete tasks through #N (each task's permanent
 #                          number, not a count or file position), then stop.
 #   --limit N             only complete N tasks this run (a count, not a task
-#                          number), then stop.
+#                          number), then stop. Works without a repo too: in
+#                          "run every repo" mode, applies independently to
+#                          each repo (first N tasks in each, in file order).
 #   --stack <name>        only work tasks annotated [stack: <name>], skip every
 #                          other stack this run.
 #   --extra-instructions "<text>"
@@ -154,7 +156,7 @@ if [[ -n "$REPO" ]]; then
   [[ -d "$TARGET" ]] || TARGET="$PROJECT_REPOS_DIR/$TARGET"
   run_repo "$TARGET"
 else
-  [[ -z "$STOP_AFTER$LIMIT$STACK$EXTRA_INSTRUCTIONS$OVERRIDE_PROMPT" ]] || { echo "run flags require a single target repo"; exit 1; }
+  [[ -z "$STOP_AFTER$STACK$EXTRA_INSTRUCTIONS$OVERRIDE_PROMPT" ]] || { echo "these run flags require a single target repo (--limit is the exception, it applies per repo)"; exit 1; }
   for d in "$PROJECT_REPOS_DIR"/*/; do
     run_repo "${d%/}"
   done
