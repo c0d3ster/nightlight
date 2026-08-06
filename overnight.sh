@@ -116,6 +116,21 @@ run_repo() {
     | jq -r -f format-stream.jq \
     | tee "$readable_log"
 
+  # Append genuine tool/harness errors (is_error results - permission denials,
+  # bad exit codes, missing files) to the same errlog used for the claude
+  # process's own stderr, then drop the file entirely if nothing landed in it.
+  jq -r '
+    select(.type == "user") | .message.content[]? |
+    select(.type == "tool_result" and .is_error == true) |
+    (if (.content | type) == "array" then
+      (.content | map(.text? // "") | join(" "))
+    else
+      (.content | tostring)
+    end) |
+    gsub("\\[[0-9;]*[a-zA-Z]"; "")
+  ' "$raw_log" >> "$errlog"
+  [[ -s "$errlog" ]] || rm -f "$errlog"
+
   update_stats "$name" "$raw_log"
 }
 
