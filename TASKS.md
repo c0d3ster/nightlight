@@ -16,7 +16,7 @@ This is nightlight working on itself: the target repo for these tasks is the nig
 
   Acceptance criteria: per-task dispatch loop in `overnight.sh`; stack-notes created/appended per above; stacked-task prompts read from stack-notes, not raw diffs; housekeeping still runs once at the end of the full loop (optionally folding a completed stack's notes into that day's archive entry).
 
-  NEEDS HUMAN: before treating this as default, do a supervised trial run on a low-stakes repo — `--limit 2` across at least two different stacks (e.g. `pnpm overnight <repo> --limit 2 --stack <name>`) — confirming dispatch and stack-notes handoff work as intended. Don't skip this trial.
+  NEEDS HUMAN: before treating this as default, do a supervised trial run on a low-stakes repo — `--limit 2` across at least two different stacks (e.g. `pnpm overnight <repo> --limit 2 --stack <name>`) — confirming dispatch and stack-notes handoff work as intended. Also capture total_cost_usd / cache-read token volume for the trial's split-per-task runs and compare against the existing single-session baseline (2026-08-06 c0d3ster: 42.8M cache-read tokens, 232 turns, $16.61 for 2 tasks in one session) — if cache-read volume doesn't drop substantially, the split-per-task design needs a second look before adopting as default. Don't skip this trial.
 
 - [ ] #9 [stack: core-loop] **Add TASKS.md status glyphs and auto-archive NEEDS HUMAN tasks on PR merge**
   Right now blocked and NEEDS HUMAN tasks are only distinguishable by reading each line's free-text annotation, and NEEDS HUMAN tasks stay in TASKS.md indefinitely with no defined path back to archive once you've completed the manual step and merged the PR. Replace `- [ ]` with distinct glyphs written only by housekeeping (preserving its single-writer role): `[!]` for blocked, `[/]` for NEEDS HUMAN. Each housekeeping run also checks every `[/]`-annotated task's PR merge state (`gh pr view <PR> --json state,mergedAt`); if merged, archive it as completed (task number, text, PR number, note that it required a human step) and remove it from TASKS.md — no manual edit required from you beyond merging the PR.
@@ -32,6 +32,11 @@ This is nightlight working on itself: the target repo for these tasks is the nig
 
 - [ ] #4 [stack: core-loop] **Split overnight logs per task**
   Once execution is subprocess-per-task, have each subprocess write its own log file (tagged with task slug and timestamp) in addition to or instead of the single combined tee currently written to `~/overnight-logs/<repo>-<date>.log`. A combined log makes it hard to isolate "what happened on task 6" without scrolling past everything before it. Acceptance criteria: each task's `claude -p` subprocess output lands in its own file under `~/overnight-logs/<repo>-<date>/<task-slug>-<timestamp>.log` (or equivalent); a combined summary log or the terminal output still gives an overview of the whole run without needing to open every per-task file. Depends on the subprocess-per-task task above.
+
+- [ ] #11 [stack: solo] **Make DB schema/migration generation NEEDS HUMAN**
+  When a task's acceptance criteria require a schema change, the agent currently generates the migration, spins up the dev server, runs codegen, verifies the output, then tears the server down — a measurable, avoidable turn cost (confirmed 2026-08-06, c0d3ster: ~7 extra Bash round-trips per migration-touching task, incurred twice in one session). Change the rule: the agent edits the schema/model file(s) only, then stops — no generate step, no dev server, no codegen — and records the change as NEEDS HUMAN with the exact follow-up commands (generate migration, review generated SQL, start dev server + run codegen, review generated types, apply migration). Applies to any ORM/migration tool, not just Drizzle — this lives in the shared Overnight Agent Workflow section, used across repos with different stacks.
+
+  Acceptance criteria: CLAUDE.md's Overnight Agent Workflow gets a new "Database changes" subsection documenting this; NEEDS HUMAN annotation format spells out the exact command sequence a human runs.
 
 ## Verify (may already be done)
 
