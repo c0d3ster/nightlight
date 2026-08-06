@@ -6,22 +6,28 @@ disable-model-invocation: true
 
 A target repo is attached via --add-dir. Read its TASKS.md, CLAUDE.md, and docs/nightlight-meta.json (if present — `nextTaskNumber` is the next number to assign; treat a missing file as `nextTaskNumber: 1`).
 
-## Triage Discovered
+`## Discovered` holds raw, un-triaged candidates (no `#<n>`, no `[stack]`) — they're in scope below alongside native Agent-Ready/Verify/Research/Decisions items.
 
-`## Discovered` holds raw, un-triaged candidates (no `#<n>`, no `[stack]`). For each, decide where it belongs — Agent-Ready (the common case), Verify, Research, or Decisions (needs my judgment) — then plan it like a native item in that section (steps below). Refined items leave Discovered entirely; nothing stays once a planning session touches it.
+## Investigate (parallel)
 
-## Plan each item
+Every unchecked item (including Discovered ones) gets its own investigation — dispatch one `Plan`-type agent per item, all as parallel foreground tool calls in a single message. Never investigate items one at a time in the main thread; that's the slow path this phase replaces. If there are more than ~8 items, dispatch in batches of that size rather than serially one-by-one.
 
-For each unchecked item across Agent-Ready, Verify, Research, and Decisions — including ones just triaged out of Discovered:
+Each dispatch is self-contained (the agent has no memory of this session) and must state: the item's exact text, the target repo's absolute path, and that it should read that repo's CLAUDE.md itself for conventions. Ask each agent to report back — never implement — with:
 
-1. Investigate the relevant parts of the target repo's codebase.
-2. Propose a sub-task breakdown with file-level hints and any missing acceptance criteria.
-3. Flag missing prerequisites (fixtures, env vars, dependencies) as NEEDS HUMAN annotations.
-4. Analyze dependencies AND shared-file overlap (schemas, barrel exports, shared components), then propose `[stack: <name>]`: tasks that depend on each other or touch the same files share a stack name in execution order; genuinely independent tasks get `[stack: solo]`. When in doubt, stack.
-5. Assign each task a stable `#<n>`, starting from `nextTaskNumber` and incrementing per task, in write order.
-6. Propose where it lands in its section's existing list — default to the bottom, but ask me explicitly where I want each one; I may want something worked first (e.g. a quick bug fix ahead of a bigger feature).
+1. For a Discovered item: which section it actually belongs in — Agent-Ready (the common case), Verify, Research, or Decisions (flag for my judgment).
+2. A sub-task breakdown with file-level hints and any missing acceptance criteria.
+3. Missing prerequisites (fixtures, env vars, dependencies) as candidate NEEDS HUMAN annotations.
+4. The concrete files/schemas/exports/components it expects to touch — needed for the cross-item overlap analysis below.
 
-Present the full proposal for my approval BEFORE writing anything — triage decisions, breakdowns/numbers/stack tags, and proposed position per item. After I approve:
+## Synthesize
+
+Once every dispatched investigation has returned:
+
+1. Cross-reference reported touch-points and dependencies across all items: share `[stack: <name>]`, in execution order, if they depend on each other or touch the same files; independent items get `[stack: solo]`. When in doubt, stack.
+2. Assign each item a stable `#<n>`, starting from `nextTaskNumber` and incrementing per item, in write order.
+3. Propose where each item lands in its target section's existing list — default to the bottom, but ask me explicitly where I want each one; I may want something worked first (e.g. a quick bug fix ahead of a bigger feature).
+
+Present the full proposal for my approval BEFORE writing anything — triage decisions (for former Discovered items), breakdowns/numbers/stack tags, and proposed position per item. After I approve:
 
 - Write the breakdowns, `#<n>` numbers, and `[stack]` tags into TASKS.md at the approved position — every checkbox line gets its number right after the checkbox, before the stack tag (e.g. `- [ ] #48 [stack: auth] Add rate limiting to login endpoint`).
 - Remove triaged items from `## Discovered`.
