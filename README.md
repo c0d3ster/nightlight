@@ -6,9 +6,10 @@ This repo holds the runner and its config — nothing else. No dependencies, no 
 
 ## How it works
 
-- `overnight.sh` points at a target repo, checks it has a `TASKS.md`, and launches `claude -p` with `--add-dir <target-repo>`.
-- Because the session is launched from *this* repo, its `CLAUDE.md` (the workflow rules), `.claude/settings.json` (the permission allowlist), and `.claude/skills/plan-tasks/` (the `/plan-tasks` skill) all apply — regardless of which repo got added.
+- `overnight.sh` points at a target repo, checks it has a `TASKS.md`, and dispatches one fresh `claude -p` subprocess per open task (plus one more for end-of-run housekeeping) with `--add-dir <target-repo>` — not one continuous session across the whole run. Each task subprocess starts with no memory of any other task, so context (and cache-read cost) stays bounded by one task's own work instead of compounding across every task in the run.
+- Because every subprocess is launched from *this* repo, its `CLAUDE.md` (the workflow rules), `.claude/settings.json` (the permission allowlist), and `.claude/skills/plan-tasks/` (the `/plan-tasks` skill) all apply — regardless of which repo got added.
 - The target repo's own `CLAUDE.md` stays exactly what it'd be without this system: test command, code conventions. No overnight-specific content ever gets written into it.
+- Stacked tasks (sharing a `[stack: <name>]` other than `solo`) still need each other's context. `overnight.sh` maintains `docs/stack-notes/<stack>.md` in the target repo — the first task in a stack creates it, each later one appends its own entry (decisions, interfaces, deviations) — and feeds a stacked task's prompt from that file instead of a raw diff or commit dump. Each task subprocess reports back a one-line `TASK_RESULT: #<n> status=... branch=... pr=...`, which `overnight.sh` collects and hands to the housekeeping subprocess as its starting point (housekeeping still confirms real PR/branch state via `git`/`gh` before trusting it).
 - The agent works entirely on `overnight/<date>/*` branches, opens a PR per task, and a single housekeeping PR at the end updates `TASKS.md`, the archive, and `docs/nightlight-meta.json`. Nothing else touches those three things.
 
 ## Requirements
@@ -97,7 +98,7 @@ Or via the `package.json` script (see Scripts below): `pnpm plan [repo]`.
 
 ## stats.sh
 
-Local, gitignored cost/time reference — never committed, never touches a target repo. After every `overnight.sh` run, the per-repo `result` event (`total_cost_usd`, `duration_ms`, `num_turns`) is folded into `stats/<repo>.json` as a running total:
+Local, gitignored cost/time reference — never committed, never touches a target repo. After every dispatched subprocess (each task, plus housekeeping — see How it works above), its `result` event (`total_cost_usd`, `duration_ms`, `num_turns`, and cache token usage) is folded into `stats/<repo>.json` as a running total. `sessions` here counts individual `claude -p` calls, not runs of `overnight.sh`:
 
 ```json
 {
@@ -105,11 +106,13 @@ Local, gitignored cost/time reference — never committed, never touches a targe
   "total_cost_usd": 52.71,
   "total_duration_s": 121430,
   "total_turns": 2870,
-  "lastRun": {"date": "2026-08-01", "cost_usd": 4.82, "duration_s": 9310, "num_turns": 214}
+  "total_cache_read_tokens": 9482113,
+  "total_cache_creation_tokens": 205774,
+  "lastRun": {"date": "2026-08-01", "cost_usd": 4.82, "duration_s": 9310, "num_turns": 214, "cache_read_tokens": 361200, "cache_creation_tokens": 18400}
 }
 ```
 
-`pnpm stats some-repo` prints that repo's running totals. `pnpm stats` (no arg) sums the `total_*` fields across every `stats/*.json` file, for a comprehensive total across every repo worked from this nightlight instance. It's a snapshot, not a log — each run overwrites the file with updated totals, so there's nothing to grep through, just current numbers.
+`pnpm stats some-repo` prints that repo's running totals. `pnpm stats` (no arg) sums the `total_*` fields across every `stats/*.json` file, for a comprehensive total across every repo worked from this nightlight instance. It's a snapshot, not a log — each run overwrites the file with updated totals, so there's nothing to grep through, just current numbers. `total_cache_read_tokens` is the one to watch when judging whether the per-task dispatch model (see How it works above) is actually keeping cost down: it should grow roughly linearly with work done, not compound the way a single continuous session across many tasks does.
 
 ## .claude/skills/plan-tasks/SKILL.md and .claude/skills/discover-tasks/SKILL.md
 
@@ -168,26 +171,26 @@ Flags scope a single run without editing `TASKS.md` or `CLAUDE.md`. They *append
 
 `--stop-after N` refers to a task's permanent `#<n>` number (see TASKS.md format below), not a count and not a position in the file. The agent works through tasks in file order and stops once it's completed task `#N`, without starting anything numbered higher — since numbers only increase down the file as tasks are added, this reliably targets one specific task, unlike a position-based count that would silently point somewhere else the moment an earlier task gets archived. Note this is a boundary check on the number, not a filter on the walk: if TASKS.md isn't in strict numeric order (e.g. `#5` was inserted above `#3`), the agent still works top-to-bottom, so it completes `#5` on the way to `#3` even though `5 > 3`.
 
-`--limit N` is the count-based counterpart: stop after completing N tasks this run, whatever their numbers happen to be. Use `--stop-after` when you want a specific task as the boundary; use `--limit` when you just want "do a few and stop." The two flags are deliberately separate rather than one overloaded flag (e.g. `5` vs `#5`) — a bare number is ambiguous between "a count" and "a task number," and that ambiguity is exactly the kind of silent-wrong-behavior risk this tool should avoid in an unattended run.
+`--limit N` is the count-based counterpart: stop after dispatching N tasks this run, whatever their numbers happen to be or however each one turns out (done, `NEEDS HUMAN`, or `blocked` all count against the limit — it's a count of subprocesses run, not of successes). Use `--stop-after` when you want a specific task as the boundary; use `--limit` when you just want "do a few and stop." The two flags are deliberately separate rather than one overloaded flag (e.g. `5` vs `#5`) — a bare number is ambiguous between "a count" and "a task number," and that ambiguity is exactly the kind of silent-wrong-behavior risk this tool should avoid in an unattended run.
 
-`--stop-after`, `--stack`, `--extra-instructions`, and `--override-prompt` require a single target repo — they're rejected in the no-arg "run every repo" mode, since scoping to one task number/stack/prompt across multiple unrelated repos isn't a coherent request. `--limit` is the exception: given with no repo, it applies independently to each repo's own session (first N tasks in that repo, in that repo's file order) rather than being a global count across all repos combined.
+`--stop-after`, `--stack`, `--extra-instructions`, and `--override-prompt` require a single target repo — they're rejected in the no-arg "run every repo" mode, since scoping to one task number/stack/prompt across multiple unrelated repos isn't a coherent request. `--limit` is the exception: given with no repo, it applies independently to each repo's own run (first N tasks in that repo, in that repo's file order) rather than being a global count across all repos combined.
 
 ```bash
 ./overnight.sh --limit 2                     # every repo with open work, first 2 tasks each
 ```
 
-There's also `--override-prompt "<text>"`, which replaces the base prompt entirely instead of appending to it. Reach for the flags above first — an override loses the housekeeping and workflow-rules framing unless `<text>` restates it.
+There's also `--override-prompt "<text>"`, which bypasses the per-task dispatch loop entirely and runs `<text>` as a single, one-off session instead — no task selection, no stack-notes, no housekeeping afterward. Reach for the flags above first — an override loses the housekeeping and workflow-rules framing unless `<text>` restates it.
 
-`overnight.sh` runs `claude -p` with `--output-format stream-json`, so the session's events (assistant text, tool calls, tool results) arrive incrementally rather than all at once at the end. Each line is piped through `format-stream.jq`, so the terminal you launched `overnight.sh` from shows clean, readable progress live — no separate `tail -f` needed. The agent opens one PR per task as it finishes, so a `gh pr create` call showing up in that live output is your signal that task is done and ready to check, rather than waiting for the whole run to finish.
+Each dispatched subprocess runs `claude -p` with `--output-format stream-json`, so its events (assistant text, tool calls, tool results) arrive incrementally rather than all at once at the end. Each line is piped through `format-stream.jq`, so the terminal you launched `overnight.sh` from shows clean, readable progress live — no separate `tail -f` needed. You'll see a `=== session started ===` / `=== session done: ... ===` pair once per task (plus one more for housekeeping) rather than a single pair for the whole run, since each is its own fresh `claude -p` call. The agent opens one PR per task as it finishes, so a `gh pr create` call showing up in that live output is your signal that task is done and ready to check, rather than waiting for the whole run to finish.
 
-Three files land in `logs/`, all gitignored: `<repo>-<date>.jsonl` (the raw NDJSON event stream, unformatted, kept for later inspection or tooling), `<repo>-<date>.log` (the same `format-stream.jq` output shown live in your terminal, saved as-is), and `<repo>-<date>.stderr.log` (anything the `claude` process wrote to stderr, kept separate so it doesn't break the JSON stream).
+Three files land in `logs/`, all gitignored: `<repo>-<date>.jsonl` (the raw NDJSON event stream, unformatted, kept for later inspection or tooling), `<repo>-<date>.log` (the same `format-stream.jq` output shown live in your terminal, saved as-is), and `<repo>-<date>.stderr.log` (anything any `claude` process wrote to stderr, kept separate so it doesn't break the JSON stream). Every dispatched subprocess this run appends to the same three files, so a full night's work for one repo still lands in one place per day.
 
-Switching to `stream-json` only changes how the CLI reports events to us locally — it doesn't change what the agent does or what it costs. The final `result` event includes `total_cost_usd` for the whole session, which `format-stream.jq` prints as the closing summary line, and which also feeds `stats/<repo>.json` (see [stats.sh](#statssh) above) — a separate, gitignored directory from `logs/`, since one is raw per-session debug output and the other is a small running-totals reference meant to survive longer than a day's log file.
+Switching to `stream-json` only changes how the CLI reports events to us locally — it doesn't change what the agent does or what it costs. Each subprocess's closing `result` event includes its own `total_cost_usd`, which `format-stream.jq` prints as that subprocess's summary line, and which also feeds `stats/<repo>.json` (see [stats.sh](#statssh) above) — a separate, gitignored directory from `logs/`, since one is raw per-subprocess debug output and the other is a small running-totals reference meant to survive longer than a day's log file.
 
 ## Behavior notes
 
-- **The session doesn't pause between tasks.** The prompt (`overnight.sh`) tells the agent to work through every Agent-Ready, Verify, and Research item in one continuous run, stopping only once everything is complete, annotated `NEEDS HUMAN`, or annotated `blocked` — not after each task.
-- **Within a stack, later tasks don't wait for earlier ones to be reviewed.** Each task branches from the previous task's branch tip, so task 2 builds on task 1's code as soon as it's written, regardless of whether you've looked at task 1's PR yet. A `NEEDS HUMAN` annotation on task 1 (missing env var, API key, etc.) doesn't pause the stack — the code is presumed complete, just not fully runnable without that step.
+- **The run doesn't pause between tasks, but each task is its own session.** `overnight.sh` dispatches every Agent-Ready, Verify, and Research item as its own fresh `claude -p` subprocess, one after another with no human gate in between, stopping only once everything is complete, annotated `NEEDS HUMAN`, or annotated `blocked` — not after each task. Unlike a single continuous session, though, each task starts with a clean slate: it has no memory of any other task, only what its prompt hands it (the task text itself, and — for stacked tasks — that stack's `docs/stack-notes/<stack>.md`).
+- **Within a stack, later tasks don't wait for earlier ones to be reviewed.** Each task branches from the previous task's branch tip (resolved for it by `overnight.sh`'s dispatch loop, from stack-notes), so task 2 builds on task 1's code as soon as it's written, regardless of whether you've looked at task 1's PR yet. A `NEEDS HUMAN` annotation on task 1 (missing env var, API key, etc.) doesn't pause the stack — the code is presumed complete, just not fully runnable without that step.
 - **`blocked` is for cross-stack dependencies, not same-stack ordering.** It only gets used when a task turns out mid-implementation to depend on work in a *different* stack. If a task's correctness genuinely depends on the real-world outcome of an earlier same-stack task's human-verification step (not just on that task's code existing), there's no automatic rule catching that today — it falls to the agent's judgment under the general "ambiguous, annotate why, skip it" rule.
 
 ## TASKS.md format (in the target repo)

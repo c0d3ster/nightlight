@@ -13,10 +13,16 @@ This repo is tooling for unattended overnight sessions against target repos. Whe
 
 ## Overnight Agent Workflow
 
+### Execution model
+
+- `overnight.sh` dispatches ONE fresh `claude -p` subprocess per open task (Agent-Ready/Verify/Research, in file order, filtered by `--stack`/`--stop-after`/`--limit`), plus one more at the end for housekeeping — not one continuous session across the whole run. Each task subprocess starts with no memory of any other task, so context (and cache-read cost) is bounded by one task's own work, never the whole run's.
+- Stacked tasks (non-`solo`) still need predecessor context without paying for a full diff/commit read. Maintain `docs/stack-notes/<stack-name>.md` in the target repo: the first task in a stack creates it, every later task in that stack appends (never rewrites) its own entry — a heading with the task's number and title, a `Branch: <branch-name>` line, key decisions, interfaces/exports created, and any deviation from acceptance criteria — committed on that task's own branch. A stacked task's prompt is built from this file's contents, not a raw diff or commit dump. `solo` tasks never create or touch a stack-notes file.
+- Each task subprocess ends its final message with one machine-parsed line: `TASK_RESULT: #<n> status=<done|blocked|needs-human> branch=<branch-name-or-none> pr=<number-or-none> note="<one-line summary>"`. The housekeeping subprocess is handed every task's `TASK_RESULT` line (collected by `overnight.sh` itself across the run) as a starting point, and confirms actual PR/branch state via `git`/`gh` before trusting it — a task session can misreport.
+
 ### Branching & PRs
 
 - Every task carries `#<n>` (assigned during planning, permanent — see Task numbering) and `[stack: <name>]`. `solo` is reserved for genuinely independent tasks — never invent another name for "no dependencies."
-- Same-named stacks (other than `solo`) chain in file order: first branches from main, each next from the previous tip; PRs target the predecessor (first targets main).
+- Same-named stacks (other than `solo`) chain in file order: first branches from main, each next from the previous tip; PRs target the predecessor (first targets main). The exact predecessor branch to build from is resolved by `overnight.sh`'s dispatch loop and told to each task's subprocess (the stack's most recent branch this run, or — resuming a stack from an earlier run — the last `Branch:` line in its stack-notes file; see Execution model above).
 - `solo` is exempt from chaining: every `solo`-tagged task branches from and PRs to main independently, no matter how many share the tag — solo tasks are never chained to each other.
 - No stack tag = inherit the previous task's stack (safe default), including `solo`'s exemption if that's what the previous task was.
 - Task turns out to depend on another stack mid-implementation? Stop, annotate blocked with the reason, move on. Never silently re-stack.
@@ -42,8 +48,8 @@ This repo is tooling for unattended overnight sessions against target repos. Whe
 
 ### TASKS.md maintenance
 
-- TASKS.md holds only open, blocked, or in-progress items. It has exactly one writer per session: the housekeeping branch.
-- At session end, create `overnight/<YYYY-MM-DD>/housekeeping` from main and make one commit that: checks off/removes completed tasks; adds NEEDS HUMAN and blocked annotations from the session; adds Discovered items; archives completed tasks (task number, text, PR number, notes) to a NEW `docs/tasks-archive/<YYYY-MM-DD>.md` (never append to an existing archive file); updates `tasksCompleted`/`tasksBlocked` in `docs/nightlight-meta.json` (create it with `nextTaskNumber: 1, tasksCompleted: 0, tasksBlocked: 0` if missing).
+- TASKS.md holds only open, blocked, or in-progress items. It has exactly one writer per run: the housekeeping subprocess.
+- At the end of a run, create `overnight/<YYYY-MM-DD>/housekeeping` from main and make one commit that: checks off/removes completed tasks; adds NEEDS HUMAN and blocked annotations from the run's dispatched tasks (per their `TASK_RESULT` lines, confirmed against actual PR/branch state — see Execution model above); adds Discovered items; archives completed tasks (task number, text, PR number, notes) to a NEW `docs/tasks-archive/<YYYY-MM-DD>.md` (never append to an existing archive file); updates `tasksCompleted`/`tasksBlocked` in `docs/nightlight-meta.json` (create it with `nextTaskNumber: 1, tasksCompleted: 0, tasksBlocked: 0` if missing).
 - Open it as its own PR, `chore: session housekeeping <date>`, targeting main — the only PR touching TASKS.md, `docs/nightlight-meta.json`, or the archive, so task PRs merge in any order across any number of nights with zero conflicts.
 - Code-complete but needs a human step (env var, API key, dashboard config)? Keep it in TASKS.md as `NEEDS HUMAN: <exact steps>` (via housekeeping), same note in the task PR description — still open the PR.
 - Ambiguous or blocked for non-human reasons: annotate why (via housekeeping), skip it, move on. Never guess on judgment calls.
