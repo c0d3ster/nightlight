@@ -4,16 +4,17 @@ description: Mines a target repo's own memory (and, with --scan, its codebase) f
 disable-model-invocation: true
 ---
 
-A target repo is attached via --add-dir (self-targeting: nightlight discovering on itself — --add-dir then resolves to this session's own primary directory). Two independent sourcing phases: memory-mining (always runs) and repo-scanning (only with `--scan`).
+A target repo is attached via --add-dir. Two independent sourcing phases: memory-mining (always runs) and repo-scanning (only with `--scan`).
 
 Announce each phase to me in one line before starting it.
 
 ## Phase 1: locate memory
 
 1. Announce: "Scanning `<repo>`'s memory for task candidates."
-2. Self-targeting: the target repo's memory is just this session's own memory, already loaded — use its MEMORY.md directly, skip step 3.
-3. Otherwise: find the entry in `~/.claude/projects/` whose name matches the target repo's absolute path (`:` and path separators → `-`) — that's its own memory folder, distinct from nightlight's since memory is scoped to the session's primary directory, not add-dir targets. Confirm against the real listing rather than assuming the encoding.
-4. No matching folder, or no MEMORY.md: say so plainly, skip to Phase 2 step 3 (repo-scan), or exit if `--scan` wasn't passed either.
+2. Determine self-targeting by comparing paths, never by assumption: get the target repo's absolute path (from --add-dir) and this session's own primary working directory (from environment info). Self-targeting applies ONLY if these two paths are the same directory — i.e. nightlight is discovering on itself. State the comparison result explicitly before proceeding (e.g. "target repo == primary dir, this is self-targeting" or "target repo != primary dir, treating as a separate repo").
+3. Self-targeting confirmed: the target repo's memory is just this session's own memory, already loaded — use its MEMORY.md directly, skip step 4.
+4. Not self-targeting: find the entry in `~/.claude/projects/` whose name matches the target repo's absolute path (`:` and path separators → `-`) — that's its own memory folder, distinct from nightlight's since memory is scoped to the session's primary directory, not add-dir targets. Confirm against the real listing rather than assuming the encoding.
+5. No matching folder, or no MEMORY.md: say so plainly, skip to Phase 2 step 3 (repo-scan), or exit if `--scan` wasn't passed either.
 
 ## Phase 2: propose candidates
 
