@@ -14,7 +14,7 @@ This repo holds the runner and its config — nothing else. No dependencies, no 
 ## Requirements
 
 - [Claude Code](https://docs.claude.com/en/docs/claude-code) CLI, logged in.
-- [pnpm](https://pnpm.io) — used only as a task runner here (`pnpm plan`, `pnpm overnight`), no actual dependencies to install.
+- [pnpm](https://pnpm.io) — used only as a task runner here (`pnpm nightlight`, `pnpm plan`, `pnpm overnight`), no actual dependencies to install.
 - Git, GitHub CLI (`gh`) authenticated for the target repo.
 - [`jq`](https://jqlang.org) — formats the live session output (see Usage below). Install instructions for every platform: [jqlang.org/download](https://jqlang.org/download).
 - A target repo with a `TASKS.md` at its root (see format below) and a `CLAUDE.md` with your test command and conventions.
@@ -41,7 +41,32 @@ This `.env` only ever holds `PROJECT_REPOS_DIR` — a path, not a secret — and
 3. Edit `CLAUDE.md` here if you want to change the workflow rules (branching scheme, quality gates, how research tasks work, etc.) — the defaults are a reasonable starting point.
 4. Edit `.claude/settings.json` to match your actual test/lint/build commands (defaults assume npm/pnpm).
 5. In each target repo, add a `TASKS.md` with your work queue and confirm `CLAUDE.md` has a test command and conventions documented. That's the only setup required in the target repo itself.
-6. `chmod +x overnight.sh plan.sh discover.sh stats.sh`. No `pnpm install` needed — `package.json` has no dependencies, it's just script aliases.
+6. `chmod +x overnight.sh plan.sh discover.sh nightlight.sh stats.sh`. No `pnpm install` needed — `package.json` has no dependencies, it's just script aliases.
+
+## nightlight.sh
+
+The whole pipeline in one command — chains `discover.sh` → `plan.sh` → `overnight.sh`:
+
+```bash
+./nightlight.sh some-repo    # single repo, start to finish
+./nightlight.sh              # every repo under PROJECT_REPOS_DIR, start to finish
+```
+
+It's a thin orchestrator, not a fourth workflow: each phase is the exact same script described below, run in sequence, with no new approval logic of its own — discover's and plan's own interactive approval gates still apply exactly as if you'd run them by hand. The one thing `nightlight.sh` adds is a pause between planning and execution:
+
+```
+Discover and plan are done. Start the overnight run now? [y/N]
+```
+
+Discover and plan never write or merge anything without your approval inside those sessions, so chaining them costs nothing extra. `overnight.sh` is different — unattended, potentially hours, real cost — so this is the one point where a chained command should make you deliberately opt in rather than sliding straight into an unattended run. Answering no exits cleanly with a reminder of the equivalent `./overnight.sh` command; nothing is lost, you can run it whenever you're ready.
+
+Every flag is supported and routed to whichever phase actually understands it — `--scan` goes to `discover.sh` only, and `overnight.sh`'s own flags (`--stop-after`, `--limit`, `--stack`, `--extra-instructions`, `--override-prompt`, see `### Limiting a run` below) are forwarded to the `overnight.sh` call verbatim, unvalidated by `nightlight.sh` itself — `overnight.sh` is the one source of truth for what each flag means and requires (e.g. its own single-repo rule for everything but `--limit`):
+
+```bash
+./nightlight.sh some-repo --scan --stop-after 27
+```
+
+Or via `package.json`: `pnpm nightlight [repo] [--scan] [overnight flags]`.
 
 ## discover.sh
 
@@ -100,10 +125,11 @@ Skills live in a named folder with a `SKILL.md` inside (not a flat `.md` file di
 ## Scripts
 
 ```bash
-pnpm discover [repo] [--scan]  # ./discover.sh [repo] [--scan]
-pnpm plan [repo]                # ./plan.sh [repo]
-pnpm overnight some-repo        # ./overnight.sh some-repo
-pnpm stats [some-repo]          # ./stats.sh [some-repo]
+pnpm nightlight [repo] [--scan] [overnight flags]  # ./nightlight.sh [repo] [--scan] [overnight flags]
+pnpm discover [repo] [--scan]                       # ./discover.sh [repo] [--scan]
+pnpm plan [repo]                                     # ./plan.sh [repo]
+pnpm overnight some-repo                             # ./overnight.sh some-repo
+pnpm stats [some-repo]                               # ./stats.sh [some-repo]
 ```
 
 Thin `package.json` wrappers around the shell scripts — no dependencies, nothing to `pnpm install`. Args pass straight through to the script (pnpm doesn't need a `--` separator the way npm does), so `pnpm plan some-repo` and `./plan.sh some-repo` are identical. Use whichever reads better; the rest of this README uses the raw `./script.sh` form since it's unambiguous about what's actually running.
@@ -122,6 +148,8 @@ Thin `package.json` wrappers around the shell scripts — no dependencies, nothi
 ```
 
 `discover.sh`/`plan.sh` with no repo run across every repo under `PROJECT_REPOS_DIR` (see `## discover.sh` / `## plan.sh` above) — but they're still two separate commands, run whenever you want; discover doesn't automatically feed into plan. Since discover's Finalize now merges its own PR (see Safety model below), running `plan` any time after `discover` already sees whatever discover found, with no manual merge step in between.
+
+`./nightlight.sh some-repo` (see `## nightlight.sh` above) is the equivalent of the three commands above, chained into one, with a confirmation pause before the `overnight.sh` step.
 
 `overnight.sh` resolves a bare name against `$PROJECT_REPOS_DIR` (from `.env`) or accepts a full path. Run it inside `tmux` or a terminal window you can leave open — closing the window kills the process. Disable sleep/hibernate for the duration.
 
