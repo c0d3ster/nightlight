@@ -81,7 +81,9 @@ def is_pure_inspect($cmd):
   ([$rest | splits("\\s*(&&|\\|\\||;)\\s*")]) as $parts |
   ($parts | length) > 0 and
   ($parts | all(
-    test("^(cat|ls|echo|head|tail)\\b[^|<>]*(\\s+2>\\s*(/dev/null|&1))?(\\s*\\|\\s*(head|tail)\\b[^|<>]*)?$")
+    test("^(cat|ls|echo|head|tail|find)\\b[^|<>]*(\\s+2>\\s*(/dev/null|&1))?(\\s*\\|\\s*(head|tail)\\b[^|<>]*)?$")
+    or
+    test("^(tasklist|ps)\\b[^|<>]*(\\s+2>\\s*(/dev/null|&1))?(\\s*\\|\\s*grep\\b[^|<>]*)?$")
   ));
 
 def summarize_bash:
@@ -92,11 +94,25 @@ def summarize_bash:
   else
     (non_empty_lines) as $lines |
     ($lines | map(select(test("^\\[[A-Z]+\\]"))) | length) as $tagged |
-    if ($lines | length) > 2 and $tagged >= (($lines | length) - 1) then
+    if $tagged >= 2 and
+       ($lines[-1] | test("success|complete|done|failed|error"; "i") or test("[✅❌]")) then
       $lines[-1]
     else
       ($lines | if length > 5 then .[-5:] else . end | join("\n") | truncate(300))
     end
+  end;
+
+# recognizes a Bash-invoked "grep <pattern> ..." (optionally behind "cd ...
+# &&" and a trailing "| head/tail -N"); returns the pattern so it gets the
+# same one-line match-count summary as the dedicated Grep tool, instead of
+# dumping every matched line.
+def bash_grep_pattern($cmd):
+  ($cmd | sub("^cd\\s+\"[^\"]*\"\\s*&&\\s*"; "")) as $rest |
+  ($rest | sub("\\s*\\|\\s*(head|tail)\\b.*$"; "")) as $core |
+  if ($core | test("^grep\\s")) then
+    ($core | capture("^grep\\s+(-[a-zA-Z]+\\s+)*\"(?<pat>[^\"]*)\"").pat // null)
+  else
+    null
   end;
 
 def tool_result_text($content):
@@ -140,7 +156,14 @@ def format_event($event; $tools):
         elif $tool_name == "Bash" and is_pure_inspect($tool.input.command // "") then
           empty
         elif $tool_name == "Bash" then
-          "    < " + ($text | summarize_bash | indent_continuations)
+          (bash_grep_pattern($tool.input.command // "")) as $grep_pat |
+          if $grep_pat then
+            ($text | non_empty_lines | length) as $n |
+            "    < " + ($n | tostring) + (if $n == 1 then " match" else " matches" end) +
+              " for \"" + $grep_pat + "\""
+          else
+            "    < " + ($text | summarize_bash | indent_continuations)
+          end
         else
           "    < " + ($text | truncate(200) | indent_continuations)
         end
