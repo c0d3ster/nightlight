@@ -27,6 +27,19 @@ Announce each phase to me in one line before starting it.
 1. Announce: "Writing N approved item(s) to TASKS.md."
 2. Append each approved candidate as a new unchecked item under TASKS.md's `## Discovered` section (create the section if it's absent): one-line description plus source. Do not assign `#<n>` numbers or `[stack]` tags — that happens later, in `/plan-tasks`.
 3. For memory-sourced items only: delete the source memory file and remove its line from that repo's MEMORY.md index. Leave rejected candidates untouched in memory.
-4. Announce completion: "Done — N item(s) added to TASKS.md § Discovered, N memory file(s) cleared."
+4. Announce: "Done — N item(s) added to TASKS.md § Discovered, N memory file(s) cleared."
+
+## Phase 4: finalize
+
+Uncommitted content sitting in the target repo's working tree is dangerous (it can be lost, or silently swept into unrelated work) — do not leave the TASKS.md edit uncommitted. Once you've written the approved candidates:
+
+1. Ask me to confirm discovery is done for this session and I want these TASKS.md additions committed and opened as a PR. Don't proceed past this step without an explicit yes — I may want to run discover-tasks again before wrapping up.
+2. Resolve the target repo's default branch: `git -C <repo> symbolic-ref --quiet --short refs/remotes/origin/HEAD` (strip the `origin/` prefix). If that fails, fall back to checking for a local `main` then `master` branch — same resolution `overnight.sh`'s `default_branch()` helper uses, so this stays consistent with how overnight sessions pick a base branch.
+3. Check the target repo's current branch (`git -C <repo> branch --show-current`) against that default. If they don't match, STOP — do not branch, commit, or PR. Tell me plainly which branch it's actually on and that the TASKS.md edit is being left uncommitted in the working tree; committing here would silently fold this into whatever unrelated work is already in progress on that branch. I'll need to switch to the default branch (or handle the commit myself) before re-running finalize.
+4. If it matches: pull latest, then create a new branch off it named `chore/tasks-discover-<YYYY-MM-DD>`. If that name already exists locally or on the remote (e.g. a second discover run same day), append `-2`, `-3`, etc.
+5. Stage only the files this phase touched — TASKS.md and any memory files deleted in step 3 above. Never `git add -A`; the target repo's working tree may hold unrelated uncommitted work that isn't yours to commit.
+6. Commit as `chore(tasks): discover N candidate task(s)`, with a body listing each added item and its memory source.
+7. Push the branch and open a PR (`gh pr create`) targeting the default branch, title matching the commit, body summarizing the additions.
+8. Report the PR URL.
 
 Do not implement any code in this session. Do not touch `docs/tasks-archive/` or `docs/nightlight-meta.json`.
