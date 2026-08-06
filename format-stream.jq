@@ -14,6 +14,26 @@ def strip_ansi:
 def strip_cr:
   gsub("\r"; "");
 
+# git's own core.autocrlf notice - fires on add/commit/checkout for any file
+# with mixed line endings, never actionable, pure noise.
+def strip_git_crlf_warnings:
+  split("\n")
+  | map(select(test("^warning: in the working copy of .*LF will be replaced by CRLF") | not))
+  | join("\n");
+
+# drops everything from the first "diff --git" marker onward - the actual
+# diff is redundant with what the PR itself will show, and a unified diff
+# in the middle of a status/commit summary is pure noise here.
+def strip_git_diff_body:
+  (split("\n")) as $lines |
+  (reduce $lines[] as $line
+    ({out: [], in_diff: false};
+      if ($line | test("^diff --git ")) then {out: .out, in_diff: true}
+      elif .in_diff then .
+      else {out: (.out + [$line]), in_diff: false}
+      end)
+  ).out | join("\n");
+
 def non_empty_lines:
   split("\n") | map(select(length > 0));
 
@@ -23,7 +43,13 @@ def indent_continuations:
   gsub("\n"; "\n      ");
 
 def tool_summary($name; $input):
-  if $name == "Bash" then ($input.command // "" | tostring | strip_ansi | truncate(150))
+  if $name == "Bash" then
+    ($input.command // "" | tostring | strip_ansi) as $cmd |
+    if ($cmd | test("git\\s+commit\\b.*-m\\s+\"")) then
+      "git commit: " + ($cmd | capture("-m\\s+\"(?<msg>[^\\n\"]*)").msg | truncate(150))
+    else
+      ($cmd | truncate(150))
+    end
   else ($input | tostring | strip_ansi | truncate(150))
   end;
 
@@ -71,6 +97,35 @@ def summarize_eslint:
   ($acc.out | map("  " + .) | join("\n")) as $body |
   if $summary_line then $summary_line + "\n" + $body else $body end;
 
+# git status --short: condense the "XY <path>" lines into a count per status
+# code (modified/added/deleted/renamed/untracked); any non-status lines in
+# the same output (e.g. a chained "git log --oneline") pass through as-is.
+def summarize_git_status:
+  (non_empty_lines) as $lines |
+  ($lines | map(select(test("^[ MADRCU?]{2}\\s\\S")))) as $status_lines |
+  ($lines | map(select(test("^[ MADRCU?]{2}\\s\\S") | not))) as $other_lines |
+  (if ($status_lines | length) == 0 then null
+   else
+     ($status_lines | map(.[0:2])) as $codes |
+     ([
+       {k: "modified",  n: ($codes | map(select(contains("M"))) | length)},
+       {k: "added",     n: ($codes | map(select(contains("A"))) | length)},
+       {k: "deleted",   n: ($codes | map(select(contains("D"))) | length)},
+       {k: "renamed",   n: ($codes | map(select(contains("R"))) | length)},
+       {k: "untracked", n: ($codes | map(select(. == "??")) | length)}
+     ] | map(select(.n > 0)) | map("\(.n) \(.k)") | join(", "))
+   end) as $status_summary |
+  ([$status_summary] + $other_lines | map(select(. != null)) | join("\n"));
+
+# git commit: keep just the "[branch hash] subject" confirmation line and the
+# diffstat summary, dropping the lefthook/commitlint box-drawing noise and
+# per-file "create mode"/"delete mode" listing in between.
+def summarize_git_commit:
+  (split("\n")) as $lines |
+  ($lines | map(select(test("^\\[\\S+ [0-9a-f]{6,}\\] "))) | first) as $commit_line |
+  ($lines | map(select(test("[0-9]+ files? changed"))) | first) as $diffstat_line |
+  ([$commit_line, $diffstat_line] | map(select(. != null)) | join("\n"));
+
 # true for a Bash command that's purely dumping/listing file contents -
 # chains of cat/ls/echo/head/tail joined by "&&"/";"/"||" (optionally behind
 # "cd ... &&", "2>/dev/null" fallbacks, and "| head -N"/"| tail -N" trims).
@@ -91,6 +146,8 @@ def summarize_bash:
   if ($text | test(" Test Files ")) then summarize_vitest
   elif ($text | test("error TS[0-9]+:")) then summarize_tsc
   elif ($text | test("✖ [0-9]+ problems? \\(")) then summarize_eslint
+  elif ($text | test("Ready in [0-9.]+\\s*m?s")) then
+    (split("\n") | map(select(test("Ready in [0-9.]+\\s*m?s"))) | first)
   else
     (non_empty_lines) as $lines |
     ($lines | map(select(test("^\\[[A-Z]+\\]"))) | length) as $tagged |
@@ -138,7 +195,7 @@ def format_event($event; $tools):
       if .type == "tool_result" then
         ($tools[.tool_use_id] // {}) as $tool |
         ($tool.name // "") as $tool_name |
-        (tool_result_text(.content) | strip_ansi | strip_cr) as $text |
+        (tool_result_text(.content) | strip_ansi | strip_cr | strip_git_crlf_warnings | strip_git_diff_body) as $text |
         if $tool_name == "Read" then
           empty
         elif $tool_name == "Glob" then
@@ -156,11 +213,16 @@ def format_event($event; $tools):
         elif $tool_name == "Bash" and is_pure_inspect($tool.input.command // "") then
           empty
         elif $tool_name == "Bash" then
-          (bash_grep_pattern($tool.input.command // "")) as $grep_pat |
+          ($tool.input.command // "") as $cmd |
+          (bash_grep_pattern($cmd)) as $grep_pat |
           if $grep_pat then
             ($text | non_empty_lines | length) as $n |
             "    < " + ($n | tostring) + (if $n == 1 then " match" else " matches" end) +
               " for \"" + $grep_pat + "\""
+          elif ($cmd | test("git\\s+commit\\b")) then
+            "    < " + ($text | summarize_git_commit | indent_continuations)
+          elif ($cmd | test("git\\s+status\\b.*(--short|-s)\\b")) then
+            "    < " + ($text | summarize_git_status | indent_continuations)
           else
             "    < " + ($text | summarize_bash | indent_continuations)
           end
