@@ -3,6 +3,7 @@
   "private": true,
   "description": "Leave a light on while you sleep. Unattended Claude Code sessions that turn TASKS.md queues into reviewable PRs, with explicit permission allowlists and no unreviewed merges.",
   "scripts": {
+    "nightlight": "bash nightlight.sh",
     "plan": "bash plan.sh",
     "discover": "bash discover.sh",
     "overnight": " bash overnight.sh",
