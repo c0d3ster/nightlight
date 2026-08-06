@@ -28,11 +28,11 @@ Repo location is set once, in a gitignored `.env` at the root:
 PROJECT_REPOS_DIR=/Users/you/Documents/project-repos
 ```
 
-Both `overnight.sh` and `plan.sh` source this, so the path only lives in one place. Copy `.env.example` to `.env` and edit it after cloning; `.env` itself is gitignored alongside `logs/`.
+`overnight.sh`, `plan.sh`, and `discover.sh` all source this, so the path only lives in one place. Copy `.env.example` to `.env` and edit it after cloning; `.env` itself is gitignored alongside `logs/`.
 
 This `.env` only ever holds `PROJECT_REPOS_DIR` — a path, not a secret — and gets sourced by the shell scripts before `claude` ever launches, so it's unrelated to the `Read(.env)` / `Read(.env.*)` deny rule in `.claude/settings.json`. That rule stops the *agent* from reading `.env` files inside whatever target repo it's working in, which may hold real credentials.
 
-**Why not Claude Code's own `additionalDirectories` setting instead?** It exists (`.claude/settings.json` or the gitignored `.claude/settings.local.json`) and is the persisted equivalent of `--add-dir` — no CLI flag needed, ever. But it only accepts static paths, and pointing it at the whole `project-repos` folder grants every session access to every repo under it, not just the one you're working on. That's a real convenience if you don't mind the blanket access. This repo defaults to the narrower option instead: a wrapper script that resolves one repo name to one path per session, staying consistent with how `overnight.sh` already scopes each run to a single target.
+**Why not Claude Code's own `additionalDirectories` setting instead?** It exists (`.claude/settings.json` or the gitignored `.claude/settings.local.json`) and is the persisted equivalent of `--add-dir` — no CLI flag needed, ever. But it's a *standing* grant: every session launched from this repo would have it, forever, whether or not that session has anything to do with any target repo. This repo defaults to the narrower option instead: a wrapper script that resolves repo path(s) fresh per invocation, scoped to what that one run is actually doing. `discover.sh`'s no-arg mode (below) does attach the whole `PROJECT_REPOS_DIR` — but only for that one process's lifetime, and only because discover has no filter to narrow it with (see `## discover.sh`); `plan.sh`'s no-arg mode attaches only the repos that actually have work to plan.
 
 ## Setup
 
@@ -41,29 +41,34 @@ This `.env` only ever holds `PROJECT_REPOS_DIR` — a path, not a secret — and
 3. Edit `CLAUDE.md` here if you want to change the workflow rules (branching scheme, quality gates, how research tasks work, etc.) — the defaults are a reasonable starting point.
 4. Edit `.claude/settings.json` to match your actual test/lint/build commands (defaults assume npm/pnpm).
 5. In each target repo, add a `TASKS.md` with your work queue and confirm `CLAUDE.md` has a test command and conventions documented. That's the only setup required in the target repo itself.
-6. `chmod +x overnight.sh plan.sh stats.sh`. No `pnpm install` needed — `package.json` has no dependencies, it's just script aliases.
+6. `chmod +x overnight.sh plan.sh discover.sh stats.sh`. No `pnpm install` needed — `package.json` has no dependencies, it's just script aliases.
+
+## discover.sh
+
+Wrapper for `/discover-tasks`, so it runs against the right repo (or repos) with zero manual steps:
+
+```bash
+./discover.sh some-repo            # single repo
+./discover.sh some-repo --scan     # single repo, plus a codebase scan
+./discover.sh                      # every repo under PROJECT_REPOS_DIR
+```
+
+Same "adds the target repo and submits the slash command as the first message" shape as `plan.sh` below — a normal interactive session, full back-and-forth, nothing written until you approve. The no-arg form attaches the whole `PROJECT_REPOS_DIR` as one `--add-dir` (discover has no `TASKS.md` prerequisite, so every repo qualifies — see the `additionalDirectories` note above for why that's fine here specifically), then mines every repo's memory in parallel and walks you through approving each repo's candidates one at a time, in order. Each repo's Finalize step now also merges its own PR once you've approved it — see Safety model below.
+
+Or via the `package.json` script (see Scripts below): `pnpm discover [repo] [--scan]`.
 
 ## plan.sh
 
-Wrapper for interactive planning sessions, so `/plan-tasks` runs against the right repo with zero manual steps:
+Wrapper for interactive planning sessions, so `/plan-tasks` runs against the right repo (or repos) with zero manual steps:
 
 ```bash
-#!/bin/bash
-set -e
-source "$(dirname "$0")/.env"
-REPO="${1:?usage: plan.sh <repo>}"
-TARGET="$PROJECT_REPOS_DIR/$REPO"
-[[ -d "$TARGET" ]] || { echo "not found: $TARGET"; exit 1; }
-exec claude --add-dir "$TARGET" "/plan-tasks"
+./plan.sh some-repo    # single repo
+./plan.sh              # every repo under PROJECT_REPOS_DIR with open, unchecked TASKS.md work
 ```
 
-```bash
-./plan.sh some-repo
-```
+`claude "<prompt>"` (no `-p`) starts a normal interactive session with `/plan-tasks` pre-submitted as the first message, then stays interactive: the proposal comes back, you review it, and only after you approve does it write to `TASKS.md`. The no-arg form first checks every repo under `PROJECT_REPOS_DIR` for a `TASKS.md` with unchecked items (same check `overnight.sh`'s no-arg mode uses), attaches only the ones that qualify, investigates every repo's items in parallel, then walks you through approving and finalizing each qualifying repo in turn. Each repo's Finalize step now also merges its own PR once you've approved it — see Safety model below.
 
-This adds the target repo *and* submits `/plan-tasks` as the session's first message in one command — `claude "<prompt>"` (no `-p`) starts a normal interactive session with that message pre-submitted, then stays interactive, so you still get the full back-and-forth: the proposal comes back, you review it, and only after you approve does it write to `TASKS.md`. Nothing about the approval step changes, you just skip typing the path and the command by hand.
-
-Or via the `package.json` script (see Scripts below): `pnpm plan some-repo`.
+Or via the `package.json` script (see Scripts below): `pnpm plan [repo]`.
 
 ## stats.sh
 
@@ -81,49 +86,24 @@ Local, gitignored cost/time reference — never committed, never touches a targe
 
 `pnpm stats some-repo` prints that repo's running totals. `pnpm stats` (no arg) sums the `total_*` fields across every `stats/*.json` file, for a comprehensive total across every repo worked from this nightlight instance. It's a snapshot, not a log — each run overwrites the file with updated totals, so there's nothing to grep through, just current numbers.
 
-## .claude/skills/plan-tasks/SKILL.md
+## .claude/skills/plan-tasks/SKILL.md and .claude/skills/discover-tasks/SKILL.md
 
-The `/plan-tasks` skill does the task breakdown that makes the overnight run actually work — `overnight.sh` executes a queue, it doesn't design one. Run this before every session, any time `TASKS.md` has new or vague items in it.
+`/plan-tasks` does the task breakdown that makes the overnight run actually work — `overnight.sh` executes a queue, it doesn't design one. `/discover-tasks` mines a repo's own memory (and, with `--scan`, its codebase) for task candidates before that. The full, current behavior of each lives in its `SKILL.md` (not reproduced here — this file drifted out of sync with the skills once before and isn't worth re-duplicating), but the shape of both:
 
-```markdown
----
-name: plan-tasks
-description: Plans and stack-annotates a target repo's TASKS.md. Use when starting a planning session to break down Agent-Ready tasks, assign [stack] annotations, and flag prerequisites before an overnight run.
-disable-model-invocation: true
----
+- Investigate/mine in parallel (one dispatched agent per item or per repo), then synthesize and ask for approval back in the main thread — never one-at-a-time in the main thread, and never write anything before you've approved it.
+- `#<n>` numbering and `[stack: <name>]` assignment (`plan-tasks`) — a stable identity per task, and the dependency/shared-file analysis that makes stacked overnight PRs mergeable in the right order. Deliberately biased toward stacking ("when in doubt, stack") since a false `solo` risks two PRs conflicting with no ordering to resolve it.
+- No-arg mode (both): fans out across every repo under `PROJECT_REPOS_DIR` (or the ones that qualify — see `## discover.sh` / `## plan.sh` above) in parallel, then reviews and finalizes them one at a time, in order.
+- Finalize: commits, opens a PR, and — new — merges it once you've approved the content earlier in that same session. See Safety model below for the scope of that.
 
-A target repo is attached to this session via --add-dir. Read its TASKS.md, its CLAUDE.md, and its docs/nightlight-meta.json (if present — its `nextTaskNumber` field is the next number to assign; treat a missing file as `nextTaskNumber: 1`). For each unchecked item across every section (Agent-Ready, Verify, Research, Decisions):
-
-1. Investigate the relevant parts of the target repo's codebase.
-2. Propose a sub-task breakdown with file-level hints and any missing acceptance criteria.
-3. Flag missing prerequisites (fixtures, env vars, dependencies) as NEEDS HUMAN annotations.
-4. Analyze dependencies AND shared-file overlap between tasks (schemas, barrel exports, shared components), then propose a [stack: <name>] annotation for every task: tasks that depend on each other or touch the same files share a stack name in execution order; genuinely independent tasks get [stack: solo]. When in doubt, stack.
-5. Assign each task in the proposal a stable `#<n>` number, starting from `nextTaskNumber` and incrementing by one per task, in the order they'll be written into TASKS.md.
-
-Present the full proposal for my approval BEFORE writing anything. After I approve:
-
-- Write the breakdowns, `#<n>` numbers, and `[stack]` annotations into the target repo's TASKS.md — every checkbox line gets its number right after the checkbox, before the stack tag (e.g. `- [ ] #48 [stack: auth] Add rate limiting to login endpoint`).
-- Update `docs/nightlight-meta.json`'s `nextTaskNumber` to one past the highest number just assigned (create the file with `nextTaskNumber`, `tasksCompleted: 0`, and `tasksBlocked: 0` if it doesn't exist yet).
-
-Do not implement any code in this session.
-```
-
-Skills live in a named folder with a `SKILL.md` inside (not a flat `.md` file directly under `.claude/skills/`) — that's the format Claude Code actually discovers. `disable-model-invocation: true` means it only runs when explicitly called via `/plan-tasks`, never auto-triggered.
-
-It matters for three reasons:
-
-- **Acceptance criteria and file-level hints.** A raw task like "add rate limiting" is too vague to run unattended safely — this turns it into something with a defined "done."
-- **`[stack: <name>]` assignment.** This is what makes the overnight PRs mergeable in the right order. It's driven by real dependency and shared-file analysis (schemas, barrel exports, shared components), not guessed at — and it's deliberately biased toward stacking ("when in doubt, stack") over declaring things independent, since a false `solo` risks two PRs conflicting on the same file with no ordering to resolve it.
-- **`#<n>` numbering.** Gives every task a stable identity that survives being checked off and archived, so a PR, commit, or `## Discovered` note can reference "task #48" and still mean the same thing months later.
-
-Runs interactively, proposes before writing anything, and never implements — it only edits `TASKS.md`. `plan.sh` (below) launches it directly.
+Skills live in a named folder with a `SKILL.md` inside (not a flat `.md` file directly under `.claude/skills/`) — that's the format Claude Code actually discovers. `disable-model-invocation: true` means each only runs when explicitly called via its slash command, never auto-triggered. Both run interactively and never touch application code — only `TASKS.md` and `docs/nightlight-meta.json`.
 
 ## Scripts
 
 ```bash
-pnpm plan some-repo       # ./plan.sh some-repo
-pnpm overnight some-repo  # ./overnight.sh some-repo
-pnpm stats [some-repo]    # ./stats.sh [some-repo]
+pnpm discover [repo] [--scan]  # ./discover.sh [repo] [--scan]
+pnpm plan [repo]                # ./plan.sh [repo]
+pnpm overnight some-repo        # ./overnight.sh some-repo
+pnpm stats [some-repo]          # ./stats.sh [some-repo]
 ```
 
 Thin `package.json` wrappers around the shell scripts — no dependencies, nothing to `pnpm install`. Args pass straight through to the script (pnpm doesn't need a `--` separator the way npm does), so `pnpm plan some-repo` and `./plan.sh some-repo` are identical. Use whichever reads better; the rest of this README uses the raw `./script.sh` form since it's unambiguous about what's actually running.
@@ -131,12 +111,17 @@ Thin `package.json` wrappers around the shell scripts — no dependencies, nothi
 ## Usage
 
 ```bash
-# breakdown first (see plan.sh above) if TASKS.md has anything new or vague
+# mine memory for task candidates first, if any have accumulated
+./discover.sh some-repo
+
+# breakdown next (see plan.sh above) if TASKS.md has anything new or vague
 ./plan.sh some-repo
 
 # the actual overnight run
 ./overnight.sh some-repo
 ```
+
+`discover.sh`/`plan.sh` with no repo run across every repo under `PROJECT_REPOS_DIR` (see `## discover.sh` / `## plan.sh` above) — but they're still two separate commands, run whenever you want; discover doesn't automatically feed into plan. Since discover's Finalize now merges its own PR (see Safety model below), running `plan` any time after `discover` already sees whatever discover found, with no manual merge step in between.
 
 `overnight.sh` resolves a bare name against `$PROJECT_REPOS_DIR` (from `.env`) or accepts a full path. Run it inside `tmux` or a terminal window you can leave open — closing the window kills the process. Disable sleep/hibernate for the duration.
 
@@ -217,6 +202,8 @@ Merge stacks bottom-up. Merge solos and housekeeping whenever.
 
 No `--dangerously-skip-permissions`. `.claude/settings.json` is an explicit allowlist (test/lint/build commands, safe git operations, PR creation) plus an explicit denylist (`main`/`master` push, merge, `rm -rf`, `.env` reads, `--no-verify`). The agent can't merge its own work or push to a protected branch — everything it produces is a PR waiting for you to look at it. If a task needs judgment or credentials it doesn't have, it's supposed to stop and annotate rather than guess.
 
+**One narrow, deliberate exception:** `/discover-tasks` and `/plan-tasks` Finalize each merge their own PR (`gh pr merge --squash --delete-branch`) once it's open, rather than leaving it for you to merge by hand. This isn't the agent deciding what's safe to land — every item going into that PR was already explicitly approved by you earlier in that same session (candidate-by-candidate in discover's Phase 2, or the full breakdown/numbering/stacking proposal in plan's Synthesize). The merge just completes something you already signed off on. It's scoped tightly on purpose: `.claude/settings.json` only allows `gh pr merge` for branches matching `chore/tasks-discover-*` / `chore/tasks-plan-*` — raw `git merge` stays denied everywhere, for every branch, no exceptions — and those branches only ever touch `TASKS.md`/`docs/nightlight-meta.json`, never application code. `overnight.sh`'s task PRs and its end-of-session housekeeping PR are untouched by this — those still always wait for you, exactly as before.
+
 ## Prior art
 
 This isn't the only take on "run Claude Code overnight." A few others, for comparison:
@@ -226,4 +213,4 @@ This isn't the only take on "run Claude Code overnight." A few others, for compa
 - [continuous-claude](https://github.com/AnandChowdhary/continuous-claude) — a literal loop: PR, wait for checks, merge, repeat.
 - [Boucle](https://github.com/Bande-a-Bonnot/Boucle-framework) — cron-scheduled, with its own persistent-memory layer across runs.
 
-The main difference here: this system never bypasses permissions and never merges its own PRs. Everything above defaults to skipping permission prompts for the autonomous run; this one trades some autonomy for an explicit allowlist and human-reviewed merges instead.
+The main difference here: this system never bypasses permissions, and code changes always wait for a human-reviewed merge. Everything above defaults to skipping permission prompts for the autonomous run; this one trades some autonomy for an explicit allowlist instead — the only self-merges it ever does are `discover`/`plan`'s own already-approved `TASKS.md` bookkeeping (see Safety model above), never application code.
