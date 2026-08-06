@@ -63,3 +63,4 @@ This repo is tooling for unattended overnight sessions against target repos. Whe
 - "Verify (may already be done)": confirm whether the work exists. If done, mark complete with a note (archived at session end). If not, implement.
 - "Research": write findings per the Research deliverables rules above. Do not implement or change defaults.
 - "Decisions (human only)": never attempt. These require my input.
+- "Discovered": raw, un-triaged candidates (no `#<n>`, no `[stack]`) added by `/discover-tasks` or found mid-session. `/plan-tasks` triages each into Agent-Ready, Verify, Research, or Decisions; nothing stays here once planned.

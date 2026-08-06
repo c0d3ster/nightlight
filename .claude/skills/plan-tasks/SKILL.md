@@ -4,17 +4,27 @@ description: Plans and stack-annotates a target repo's TASKS.md. Use when starti
 disable-model-invocation: true
 ---
 
-A target repo is attached to this session via --add-dir. Read its TASKS.md, its CLAUDE.md, and its docs/nightlight-meta.json (if present — its `nextTaskNumber` field is the next number to assign; treat a missing file as `nextTaskNumber: 1`). For each unchecked item across every section (Agent-Ready, Verify, Research, Decisions):
+A target repo is attached to this session via --add-dir. Read its TASKS.md, its CLAUDE.md, and its docs/nightlight-meta.json (if present — its `nextTaskNumber` field is the next number to assign; treat a missing file as `nextTaskNumber: 1`).
+
+## Triage Discovered
+
+`## Discovered` holds raw, un-triaged candidates (no `#<n>`, no `[stack]`). For each one, decide which section it actually belongs in — Agent-Ready (implementable work; the common case), Verify, Research, or Decisions (needs my judgment) — then plan it exactly like a native item in that section (steps below). Once refined, it moves out of Discovered entirely into its target section; nothing stays in Discovered after a planning session touches it.
+
+## Plan each item
+
+For each unchecked item across Agent-Ready, Verify, Research, and Decisions — including ones just triaged out of Discovered:
 
 1. Investigate the relevant parts of the target repo's codebase.
 2. Propose a sub-task breakdown with file-level hints and any missing acceptance criteria.
 3. Flag missing prerequisites (fixtures, env vars, dependencies) as NEEDS HUMAN annotations.
 4. Analyze dependencies AND shared-file overlap between tasks (schemas, barrel exports, shared components), then propose a [stack: <name>] annotation for every task: tasks that depend on each other or touch the same files share a stack name in execution order; genuinely independent tasks get [stack: solo]. When in doubt, stack.
 5. Assign each task in the proposal a stable `#<n>` number, starting from `nextTaskNumber` and incrementing by one per task, in the order they'll be written into TASKS.md.
+6. Propose where the item lands in its target section's existing list: default to the bottom (lowest priority), but ask me explicitly where I want each one — I may want something worked first (e.g. a quick bug fix ahead of a bigger feature).
 
-Present the full proposal for my approval BEFORE writing anything. After I approve:
+Present the full proposal for my approval BEFORE writing anything — the triage decision per Discovered item, the breakdown/numbers/stack tags, and the proposed position of each item in its section. After I approve:
 
-- Write the breakdowns, `#<n>` numbers, and `[stack]` annotations into the target repo's TASKS.md — every checkbox line gets its number right after the checkbox, before the stack tag (e.g. `- [ ] #48 [stack: auth] Add rate limiting to login endpoint`).
+- Write the breakdowns, `#<n>` numbers, and `[stack]` annotations into the target repo's TASKS.md at the approved position in each section — every checkbox line gets its number right after the checkbox, before the stack tag (e.g. `- [ ] #48 [stack: auth] Add rate limiting to login endpoint`).
+- Remove triaged items from `## Discovered`.
 - Update `docs/nightlight-meta.json`'s `nextTaskNumber` to one past the highest number just assigned (create the file with `nextTaskNumber`, `tasksCompleted: 0`, and `tasksBlocked: 0` if it doesn't exist yet).
 
 ## Finalize
