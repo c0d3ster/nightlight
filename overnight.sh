@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # usage: pnpm overnight [repo] [flags]
 #   with repo: run that one repo
 #   without:   run every repo under PROJECT_REPOS_DIR that has open TASKS.md work
@@ -103,7 +103,7 @@ split_tasks() {
       idx=$((idx+1))
       cur_num="${BASH_REMATCH[1]}"
       local rest="${BASH_REMATCH[2]}"
-      if [[ "$rest" =~ $stack_re ]]; then cur_stack="${BASH_REMATCH[1]}"; else cur_stack="$prev_stack"; fi
+      if [[ "$rest" =~ $stack_re ]]; then cur_stack="${BASH_REMATCH[1]}"; else cur_stack="${prev_stack:-solo}"; fi
       prev_stack="$cur_stack"
       cur_file="$outdir/$(printf '%04d' "$idx")-$cur_num.task"
       printf '%s\n' "$line" > "$cur_file"
@@ -230,10 +230,12 @@ Treat the TASK_RESULT lines above as a starting point, not ground truth -- a tas
 # Runs one claude -p subprocess with the given prompt against repo_path,
 # streaming it live (through format-stream.jq) and appending it to the run's
 # combined raw/readable/stderr logs. Sets DISPATCH_TMP_RAW (a plain, non-local
-# assignment -- this is dispatch()'s return value) to a temp file holding just
-# this call's raw NDJSON, so the caller can pull a TASK_RESULT line out of
+# assignment -- this is dispatch()'s other return value) to a temp file holding
+# just this call's raw NDJSON, so the caller can pull a TASK_RESULT line out of
 # exactly this subprocess's output rather than the whole run's; the caller is
-# responsible for rm-ing it afterward.
+# responsible for rm-ing it afterward. Returns claude's own exit status (not
+# the trailing tee's) so callers can tell a genuine claude failure (auth error,
+# missing format-stream.jq, etc.) apart from a normal run.
 dispatch() {
   local prompt="$1" repo_path="$2" raw_log="$3" readable_log="$4" errlog="$5"
   DISPATCH_TMP_RAW="$(mktemp)"
@@ -249,6 +251,7 @@ dispatch() {
     | tee "$DISPATCH_TMP_RAW" \
     | jq -r -f format-stream.jq \
     | tee -a "$readable_log"
+  local claude_status="${PIPESTATUS[0]}"
 
   cat "$DISPATCH_TMP_RAW" >> "$raw_log"
 
@@ -264,6 +267,8 @@ dispatch() {
     end) |
     gsub("\\[[0-9;]*[a-zA-Z]"; "")
   ' "$DISPATCH_TMP_RAW" >> "$errlog"
+
+  return "$claude_status"
 }
 
 # Pulls the last "TASK_RESULT: ..." line out of a task subprocess's final
@@ -329,7 +334,8 @@ run_repo() {
   local errlog="logs/$name-$(date +%F).stderr.log"
 
   if [[ -n "$OVERRIDE_PROMPT" ]]; then
-    dispatch "$OVERRIDE_PROMPT" "$repo_path" "$raw_log" "$readable_log" "$errlog"
+    dispatch "$OVERRIDE_PROMPT" "$repo_path" "$raw_log" "$readable_log" "$errlog" \
+      || echo "warn: claude exited non-zero for $name's override-prompt session -- check $errlog"
     update_stats "$name" "$DISPATCH_TMP_RAW"
     rm -f "$DISPATCH_TMP_RAW"
     [[ -s "$errlog" ]] || rm -f "$errlog"
@@ -349,7 +355,7 @@ run_repo() {
   fi
 
   local -A stack_branch=()
-  local attempted=0
+  local attempted=0 consecutive_failures=0
   local run_summary="" skipped_summary=""
 
   local rec num stack blockfile
@@ -382,7 +388,18 @@ run_repo() {
     task_prompt="$(build_task_prompt "$(cat "$blockfile")" "$num" "$stack" "$base_branch" "$stack_notes")"
 
     echo "--- dispatching task #$num [stack: $stack] ---"
-    dispatch "$task_prompt" "$repo_path" "$raw_log" "$readable_log" "$errlog"
+    if dispatch "$task_prompt" "$repo_path" "$raw_log" "$readable_log" "$errlog"; then
+      consecutive_failures=0
+    else
+      consecutive_failures=$((consecutive_failures+1))
+      echo "warn: claude exited non-zero for task #$num -- check $errlog"
+      if [[ "$consecutive_failures" -ge 2 ]]; then
+        echo "error: two consecutive dispatch failures for $name, aborting this repo's run"
+        rm -f "$DISPATCH_TMP_RAW"
+        rm -rf "$blockdir"
+        return 1
+      fi
+    fi
     update_stats "$name" "$DISPATCH_TMP_RAW"
 
     local task_result; task_result="$(extract_task_result "$DISPATCH_TMP_RAW")"
@@ -395,9 +412,14 @@ run_repo() {
     run_summary="$run_summary
 $task_result"
 
-    local reported_branch; reported_branch="$(sed -n 's/.*branch=\([^ ]*\).*/\1/p' <<< "$task_result")"
+    local reported_branch
+    reported_branch="$(sed -n 's/^TASK_RESULT: #[0-9]* status=[^ ]* branch=\([^ ]*\).*/\1/p' <<< "$task_result")"
     if [[ -n "$reported_branch" && "$reported_branch" != "none" && "$reported_branch" != "unknown" ]]; then
-      stack_branch["$stack"]="$reported_branch"
+      if git -C "$repo_path" show-ref --verify --quiet "refs/heads/$reported_branch"; then
+        stack_branch["$stack"]="$reported_branch"
+      else
+        echo "warn: task #$num reported branch '$reported_branch', which doesn't exist locally -- stack '$stack' keeps its previous base"
+      fi
     fi
 
     attempted=$((attempted+1))
@@ -412,7 +434,8 @@ $task_result"
 
   local housekeeping_prompt; housekeeping_prompt="$(build_housekeeping_prompt "$run_summary" "$skipped_summary")"
   echo "--- dispatching housekeeping ---"
-  dispatch "$housekeeping_prompt" "$repo_path" "$raw_log" "$readable_log" "$errlog"
+  dispatch "$housekeeping_prompt" "$repo_path" "$raw_log" "$readable_log" "$errlog" \
+    || echo "warn: claude exited non-zero for $name's housekeeping session -- check $errlog"
   update_stats "$name" "$DISPATCH_TMP_RAW"
   rm -f "$DISPATCH_TMP_RAW"
 

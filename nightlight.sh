@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # usage: pnpm nightlight [repo] [--scan] [overnight flags]
 #   with repo: chains discover -> plan -> overnight for that one repo
 #   without:   chains discover -> plan -> overnight, each in its own

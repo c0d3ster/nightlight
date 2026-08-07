@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # usage: pnpm stats [repo] — cost/time totals from stats/*.json
 #   with repo: that repo's running totals
 #   without:   summed across every repo worked from this nightlight instance

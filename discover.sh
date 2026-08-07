@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # usage: pnpm discover [repo] [--scan]
 #   with repo: mine that one repo's memory (and, with --scan, its codebase)
 #              for task candidates and propose additions to its TASKS.md

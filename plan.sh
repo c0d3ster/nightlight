@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # usage: pnpm plan [repo] — opens an interactive planning session
 #   with repo: plans that one repo
 #   without:   plans every repo under PROJECT_REPOS_DIR that has open,
