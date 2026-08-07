@@ -395,6 +395,7 @@ run_repo() {
       echo "warn: claude exited non-zero for task #$num -- check $errlog"
       if [[ "$consecutive_failures" -ge 2 ]]; then
         echo "error: two consecutive dispatch failures for $name, aborting this repo's run"
+        update_stats "$name" "$DISPATCH_TMP_RAW"
         rm -f "$DISPATCH_TMP_RAW"
         rm -rf "$blockdir"
         return 1
@@ -405,15 +406,23 @@ run_repo() {
     local task_result; task_result="$(extract_task_result "$DISPATCH_TMP_RAW")"
     rm -f "$DISPATCH_TMP_RAW"
 
-    if [[ -z "$task_result" ]]; then
-      echo "warn: task #$num did not emit a TASK_RESULT line"
-      task_result="TASK_RESULT: #$num status=unknown branch=unknown pr=unknown note=\"subprocess ended without emitting a TASK_RESULT line -- check its branch/PR state manually\""
+    # Only trust a TASK_RESULT line that names THIS task's own number -- a
+    # stale or malformed one (wrong #, or none at all) falls back to the same
+    # synthesized "unknown" line extract_task_result's absence would produce.
+    local task_result_re="^TASK_RESULT: #$num "
+    if [[ -z "$task_result" || ! "$task_result" =~ $task_result_re ]]; then
+      if [[ -n "$task_result" ]]; then
+        echo "warn: task #$num's TASK_RESULT line didn't match its own task number, ignoring it: $task_result"
+      else
+        echo "warn: task #$num did not emit a TASK_RESULT line"
+      fi
+      task_result="TASK_RESULT: #$num status=unknown branch=unknown pr=unknown note=\"subprocess ended without emitting a valid TASK_RESULT line -- check its branch/PR state manually\""
     fi
     run_summary="$run_summary
 $task_result"
 
     local reported_branch
-    reported_branch="$(sed -n 's/^TASK_RESULT: #[0-9]* status=[^ ]* branch=\([^ ]*\).*/\1/p' <<< "$task_result")"
+    reported_branch="$(sed -n "s/^TASK_RESULT: #$num status=[^ ]* branch=\\([^ ]*\\).*/\\1/p" <<< "$task_result")"
     if [[ -n "$reported_branch" && "$reported_branch" != "none" && "$reported_branch" != "unknown" ]]; then
       if git -C "$repo_path" show-ref --verify --quiet "refs/heads/$reported_branch"; then
         stack_branch["$stack"]="$reported_branch"
