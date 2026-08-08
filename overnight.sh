@@ -303,22 +303,13 @@ update_stats() {
   jq -n \
     --argjson prev "$prev_json" \
     --argjson result "$result_line" \
-    --arg date "$(date +%F)" \
     '{
       sessions: (($prev.sessions // 0) + 1),
       total_cost_usd: (($prev.total_cost_usd // 0) + $result.total_cost_usd),
       total_duration_s: (($prev.total_duration_s // 0) + ($result.duration_ms / 1000 | floor)),
       total_turns: (($prev.total_turns // 0) + $result.num_turns),
       total_cache_read_tokens: (($prev.total_cache_read_tokens // 0) + ($result.usage.cache_read_input_tokens // 0)),
-      total_cache_creation_tokens: (($prev.total_cache_creation_tokens // 0) + ($result.usage.cache_creation_input_tokens // 0)),
-      lastRun: {
-        date: $date,
-        cost_usd: $result.total_cost_usd,
-        duration_s: ($result.duration_ms / 1000 | floor),
-        num_turns: $result.num_turns,
-        cache_read_tokens: ($result.usage.cache_read_input_tokens // 0),
-        cache_creation_tokens: ($result.usage.cache_creation_input_tokens // 0)
-      }
+      total_cache_creation_tokens: (($prev.total_cache_creation_tokens // 0) + ($result.usage.cache_creation_input_tokens // 0))
     }' > "$stats_file"
 
   US_COST="$(jq -n --argjson r "$result_line" '$r.total_cost_usd')"
@@ -331,13 +322,19 @@ update_stats() {
 # Folds this run_repo() invocation's whole-run totals (every dispatch made
 # this call: every attempted task plus housekeeping -- accumulated by the
 # caller from each update_stats() call's US_* return values) into
-# stats/<repo>.json as lastSession, distinct from lastRun (a single dispatch)
-# and total_* (lifetime across every run_repo() invocation ever). This is the
-# "what did this whole overnight run cost me" number -- previously you had to
-# either sum per-task numbers out of the raw logs by hand, or read total_*
-# before and after and subtract.
+# stats/<repo>.json as lastSession, distinct from total_* (lifetime across
+# every run_repo() invocation ever). This is the "what did this whole
+# overnight run cost me" number -- previously you had to either sum per-task
+# numbers out of the raw logs by hand, or read total_* before and after and
+# subtract. (There's deliberately no per-dispatch "lastRun" here: with one
+# subprocess per task, the last dispatch of a normal run is always
+# housekeeping, whose prompt barely varies call to call -- that number isn't
+# informative on its own.) tasks_json is a JSON array (built by the caller
+# from record_task_entry()'s accumulated entries, "[]" if there were none --
+# e.g. override-prompt mode) giving the per-task breakdown at a glance:
+# which task, what it cost, how many turns, whether it finished.
 record_session_totals() {
-  local name="$1" calls="$2" cost="$3" duration_s="$4" turns="$5" cache_read="$6" cache_creation="$7"
+  local name="$1" calls="$2" cost="$3" duration_s="$4" turns="$5" cache_read="$6" cache_creation="$7" tasks_json="${8:-[]}"
   local stats_file="stats/$name.json"
   local prev_json="{}"
   [[ -f "$stats_file" ]] && prev_json="$(cat "$stats_file")"
@@ -350,6 +347,7 @@ record_session_totals() {
     --argjson turns "$turns" \
     --argjson cache_read "$cache_read" \
     --argjson cache_creation "$cache_creation" \
+    --argjson tasks "$tasks_json" \
     '$prev + {
       lastSession: {
         date: $date,
@@ -358,7 +356,8 @@ record_session_totals() {
         duration_s: $duration_s,
         num_turns: $turns,
         cache_read_tokens: $cache_read,
-        cache_creation_tokens: $cache_creation
+        cache_creation_tokens: $cache_creation,
+        tasks: $tasks
       }
     }' > "$stats_file"
   echo "=== $name: this run cost \$$cost across $calls subprocess call(s), $turns turns, $cache_read cache-read tokens ==="
@@ -421,6 +420,25 @@ run_repo() {
     session_cache_creation=$((session_cache_creation+US_CACHE_CREATION))
   }
 
+  # Appends one task dispatch's own numbers (still sitting in US_* from the
+  # update_stats() call just made for it) as an entry in this run's tasks
+  # array -- housekeeping isn't a numbered task, so it's never added here,
+  # only the per-task dispatch loop below calls this.
+  local -a session_task_entries=()
+  record_task_entry() {
+    local num="$1" title="$2" status="$3"
+    session_task_entries+=("$(jq -nc \
+      --argjson num "$num" \
+      --arg title "$title" \
+      --arg status "$status" \
+      --argjson cost "$US_COST" \
+      --argjson duration_s "$US_DURATION_S" \
+      --argjson turns "$US_TURNS" \
+      --argjson cache_read "$US_CACHE_READ" \
+      --argjson cache_creation "$US_CACHE_CREATION" \
+      '{taskNumber: $num, taskTitle: $title, status: $status, cost_usd: $cost, duration_s: $duration_s, num_turns: $turns, cache_read_tokens: $cache_read, cache_creation_tokens: $cache_creation}')")
+  }
+
   local rec num stack blockfile
   for rec in "${task_records[@]}"; do
     IFS=$'\t' read -r num stack blockfile <<< "$rec"
@@ -447,6 +465,9 @@ run_repo() {
       stack_notes="$(cat "$repo_path/docs/stack-notes/$stack.md")"
     fi
 
+    local task_title
+    task_title="$(sed -n '1p' "$blockfile" | sed -E 's/^- \[ \] #[0-9]+ (\[stack: [^]]+\] )?\*\*(.*)\*\*.*$/\2/')"
+
     local task_prompt
     task_prompt="$(build_task_prompt "$(cat "$blockfile")" "$num" "$stack" "$base_branch" "$stack_notes")"
 
@@ -460,7 +481,8 @@ run_repo() {
         echo "error: two consecutive dispatch failures for $name, aborting this repo's run"
         update_stats "$name" "$DISPATCH_TMP_RAW"
         accumulate_session
-        record_session_totals "$name" "$session_calls" "$session_cost" "$session_duration" "$session_turns" "$session_cache_read" "$session_cache_creation"
+        record_task_entry "$num" "$task_title" "dispatch-error"
+        record_session_totals "$name" "$session_calls" "$session_cost" "$session_duration" "$session_turns" "$session_cache_read" "$session_cache_creation" "$(printf '%s\n' "${session_task_entries[@]}" | jq -s '.')"
         rm -f "$DISPATCH_TMP_RAW"
         rm -rf "$blockdir"
         return 1
@@ -497,6 +519,10 @@ $task_result"
       fi
     fi
 
+    local reported_status
+    reported_status="$(sed -n "s/^TASK_RESULT: #$num status=\\([^ ]*\\).*/\\1/p" <<< "$task_result")"
+    record_task_entry "$num" "$task_title" "${reported_status:-unknown}"
+
     attempted=$((attempted+1))
   done
 
@@ -515,7 +541,8 @@ $task_result"
   accumulate_session
   rm -f "$DISPATCH_TMP_RAW"
 
-  record_session_totals "$name" "$session_calls" "$session_cost" "$session_duration" "$session_turns" "$session_cache_read" "$session_cache_creation"
+  local tasks_json; tasks_json="$(printf '%s\n' "${session_task_entries[@]}" | jq -s '.')"
+  record_session_totals "$name" "$session_calls" "$session_cost" "$session_duration" "$session_turns" "$session_cache_read" "$session_cache_creation" "$tasks_json"
 
   [[ -s "$errlog" ]] || rm -f "$errlog"
 }

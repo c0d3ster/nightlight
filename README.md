@@ -109,15 +109,25 @@ Local, gitignored cost/time reference — never committed, never touches a targe
   "total_turns": 2870,
   "total_cache_read_tokens": 9482113,
   "total_cache_creation_tokens": 205774,
-  "lastRun": {"date": "2026-08-01", "cost_usd": 4.82, "duration_s": 9310, "num_turns": 214, "cache_read_tokens": 361200, "cache_creation_tokens": 18400},
-  "lastSession": {"date": "2026-08-01", "calls": 3, "cost_usd": 6.56, "duration_s": 2025, "num_turns": 147, "cache_read_tokens": 11759541, "cache_creation_tokens": 235138}
+  "lastSession": {
+    "date": "2026-08-01",
+    "calls": 3,
+    "cost_usd": 6.56,
+    "duration_s": 2025,
+    "num_turns": 147,
+    "cache_read_tokens": 11759541,
+    "cache_creation_tokens": 235138,
+    "tasks": [
+      {"taskNumber": 18, "taskTitle": "Strip sprite background", "status": "done", "cost_usd": 1.30, "duration_s": 445, "num_turns": 28, "cache_read_tokens": 1568035, "cache_creation_tokens": 71886},
+      {"taskNumber": 19, "taskTitle": "Some other task", "status": "needs-human", "cost_usd": 4.88, "duration_s": 1449, "num_turns": 104, "cache_read_tokens": 9657573, "cache_creation_tokens": 138775}
+    ]
+  }
 }
 ```
 
-Three different granularities live here, easy to mix up:
+Two granularities live here:
 - `total_*` — lifetime across every `run_repo()` invocation ever, for this repo.
-- `lastRun` — the single most recent dispatched subprocess (usually housekeeping, since it dispatches last) — a snapshot, not a total.
-- `lastSession` — every dispatch made by the most recent `overnight.sh` invocation for this repo (every task attempted plus housekeeping), rolled into one number. This is "what did last night's run actually cost me" — printed to stdout at the end of the run too, so you don't need to open this file or dig through logs just to see it.
+- `lastSession` — every dispatch made by the most recent `overnight.sh` invocation for this repo (every task attempted plus housekeeping), rolled into one number, plus a `tasks` breakdown (one entry per dispatched task, housekeeping excluded) so you can see which task cost what and how it finished at a glance. This is "what did last night's run actually cost me" — printed to stdout at the end of the run too, so you don't need to open this file or dig through logs just to see it. (There's deliberately no per-dispatch `lastRun` here: with one subprocess per task, the last dispatch of a normal run is always housekeeping, whose prompt barely varies call to call, so that number in isolation isn't informative.)
 
 `pnpm stats some-repo` prints that repo's running totals. `pnpm stats` (no arg) sums the `total_*` fields across every `stats/*.json` file, for a comprehensive total across every repo worked from this nightlight instance. It's a snapshot, not a log — each run overwrites the file with updated totals, so there's nothing to grep through, just current numbers. `total_cache_read_tokens` is the one to watch when judging whether the per-task dispatch model (see How it works above) is actually keeping cost down: it should grow roughly linearly with work done, not compound the way a single continuous session across many tasks does.
 
