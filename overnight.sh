@@ -282,12 +282,18 @@ extract_task_result() {
 # closing "result" event) into stats/<repo>.json's running totals. Local-only,
 # gitignored -- never committed, never touches the target repo. Called once
 # per dispatched subprocess (each task, plus housekeeping), so "sessions" here
-# means individual claude -p calls, not runs of overnight.sh.
+# means individual claude -p calls, not runs of overnight.sh. Also sets
+# US_COST/US_DURATION_S/US_TURNS/US_CACHE_READ/US_CACHE_CREATION (plain,
+# non-local assignments -- same other-return-value pattern as dispatch()'s
+# DISPATCH_TMP_RAW) to this one call's own numbers, all zeroed if the result
+# event was missing, so run_repo() can roll them into a whole-run total
+# without re-parsing the log itself.
 update_stats() {
   local name="$1" raw_log="$2"
   mkdir -p stats
   local stats_file="stats/$name.json"
   local result_line; result_line="$(jq -c 'select(.type == "result")' "$raw_log" | tail -n1)"
+  US_COST=0; US_DURATION_S=0; US_TURNS=0; US_CACHE_READ=0; US_CACHE_CREATION=0
   if [[ -z "$result_line" ]]; then
     echo "warn: no result event in $raw_log, skipping stats update"
     return 0
@@ -314,6 +320,48 @@ update_stats() {
         cache_creation_tokens: ($result.usage.cache_creation_input_tokens // 0)
       }
     }' > "$stats_file"
+
+  US_COST="$(jq -n --argjson r "$result_line" '$r.total_cost_usd')"
+  US_DURATION_S="$(jq -n --argjson r "$result_line" '$r.duration_ms / 1000 | floor')"
+  US_TURNS="$(jq -n --argjson r "$result_line" '$r.num_turns')"
+  US_CACHE_READ="$(jq -n --argjson r "$result_line" '$r.usage.cache_read_input_tokens // 0')"
+  US_CACHE_CREATION="$(jq -n --argjson r "$result_line" '$r.usage.cache_creation_input_tokens // 0')"
+}
+
+# Folds this run_repo() invocation's whole-run totals (every dispatch made
+# this call: every attempted task plus housekeeping -- accumulated by the
+# caller from each update_stats() call's US_* return values) into
+# stats/<repo>.json as lastSession, distinct from lastRun (a single dispatch)
+# and total_* (lifetime across every run_repo() invocation ever). This is the
+# "what did this whole overnight run cost me" number -- previously you had to
+# either sum per-task numbers out of the raw logs by hand, or read total_*
+# before and after and subtract.
+record_session_totals() {
+  local name="$1" calls="$2" cost="$3" duration_s="$4" turns="$5" cache_read="$6" cache_creation="$7"
+  local stats_file="stats/$name.json"
+  local prev_json="{}"
+  [[ -f "$stats_file" ]] && prev_json="$(cat "$stats_file")"
+  jq -n \
+    --argjson prev "$prev_json" \
+    --arg date "$(date +%F)" \
+    --argjson calls "$calls" \
+    --argjson cost "$cost" \
+    --argjson duration_s "$duration_s" \
+    --argjson turns "$turns" \
+    --argjson cache_read "$cache_read" \
+    --argjson cache_creation "$cache_creation" \
+    '$prev + {
+      lastSession: {
+        date: $date,
+        calls: $calls,
+        cost_usd: $cost,
+        duration_s: $duration_s,
+        num_turns: $turns,
+        cache_read_tokens: $cache_read,
+        cache_creation_tokens: $cache_creation
+      }
+    }' > "$stats_file"
+  echo "=== $name: this run cost \$$cost across $calls subprocess call(s), $turns turns, $cache_read cache-read tokens ==="
 }
 
 run_repo() {
@@ -338,6 +386,7 @@ run_repo() {
       || echo "warn: claude exited non-zero for $name's override-prompt session -- check $errlog"
     update_stats "$name" "$DISPATCH_TMP_RAW"
     rm -f "$DISPATCH_TMP_RAW"
+    record_session_totals "$name" 1 "$US_COST" "$US_DURATION_S" "$US_TURNS" "$US_CACHE_READ" "$US_CACHE_CREATION"
     [[ -s "$errlog" ]] || rm -f "$errlog"
     return 0
   fi
@@ -357,6 +406,20 @@ run_repo() {
   local -A stack_branch=()
   local attempted=0 consecutive_failures=0
   local run_summary="" skipped_summary=""
+  local session_calls=0 session_cost=0 session_duration=0 session_turns=0 session_cache_read=0 session_cache_creation=0
+
+  # Folds one update_stats() call's US_* return values into this run_repo()
+  # invocation's running total -- called after every dispatch (each task,
+  # plus housekeeping), so record_session_totals() at the end reflects the
+  # whole run, not just the last subprocess.
+  accumulate_session() {
+    session_calls=$((session_calls+1))
+    session_cost="$(awk -v a="$session_cost" -v b="$US_COST" 'BEGIN{print a+b}')"
+    session_duration=$((session_duration+US_DURATION_S))
+    session_turns=$((session_turns+US_TURNS))
+    session_cache_read=$((session_cache_read+US_CACHE_READ))
+    session_cache_creation=$((session_cache_creation+US_CACHE_CREATION))
+  }
 
   local rec num stack blockfile
   for rec in "${task_records[@]}"; do
@@ -396,12 +459,15 @@ run_repo() {
       if [[ "$consecutive_failures" -ge 2 ]]; then
         echo "error: two consecutive dispatch failures for $name, aborting this repo's run"
         update_stats "$name" "$DISPATCH_TMP_RAW"
+        accumulate_session
+        record_session_totals "$name" "$session_calls" "$session_cost" "$session_duration" "$session_turns" "$session_cache_read" "$session_cache_creation"
         rm -f "$DISPATCH_TMP_RAW"
         rm -rf "$blockdir"
         return 1
       fi
     fi
     update_stats "$name" "$DISPATCH_TMP_RAW"
+    accumulate_session
 
     local task_result; task_result="$(extract_task_result "$DISPATCH_TMP_RAW")"
     rm -f "$DISPATCH_TMP_RAW"
@@ -446,7 +512,10 @@ $task_result"
   dispatch "$housekeeping_prompt" "$repo_path" "$raw_log" "$readable_log" "$errlog" \
     || echo "warn: claude exited non-zero for $name's housekeeping session -- check $errlog"
   update_stats "$name" "$DISPATCH_TMP_RAW"
+  accumulate_session
   rm -f "$DISPATCH_TMP_RAW"
+
+  record_session_totals "$name" "$session_calls" "$session_cost" "$session_duration" "$session_turns" "$session_cache_read" "$session_cache_creation"
 
   [[ -s "$errlog" ]] || rm -f "$errlog"
 }
