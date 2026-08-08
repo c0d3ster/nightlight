@@ -319,6 +319,54 @@ update_stats() {
   US_CACHE_CREATION="$(jq -n --argjson r "$result_line" '$r.usage.cache_creation_input_tokens // 0')"
 }
 
+# Hand-written structural self-check for stats/<repo>.json against
+# docs/stats-schema.json -- no schema validator dependency in this repo (see
+# that file's own header for why), so this is deliberately not exhaustive,
+# just enough to catch a future edit silently breaking the documented shape.
+# Warns, never aborts a run: a stats-file format bug is never worth losing
+# real task work over.
+validate_stats_shape() {
+  local stats_file="$1"
+  local err
+  err="$(jq -r '
+    def check(cond; msg): if cond then empty else msg end;
+    [
+      check(.sessions | type == "number"; "sessions missing or not a number"),
+      check(.total_cost_usd | type == "number"; "total_cost_usd missing or not a number"),
+      check(.total_duration_s | type == "number"; "total_duration_s missing or not a number"),
+      check(.total_turns | type == "number"; "total_turns missing or not a number"),
+      check((.lastSession | type) == "object"; "lastSession missing or not an object"),
+      check((.lastSession.date | type) == "string"; "lastSession.date missing or not a string"),
+      check((.lastSession.calls | type) == "number"; "lastSession.calls missing or not a number"),
+      check((.lastSession.cost_usd | type) == "number"; "lastSession.cost_usd missing or not a number"),
+      check((.lastSession.tasks | type) == "array"; "lastSession.tasks missing or not an array"),
+      (.lastSession.tasks // [] | to_entries[] | . as $e |
+        check(($e.value.taskNumber | type) == "number"; "lastSession.tasks[\($e.key)].taskNumber missing or not a number"),
+        check(($e.value.taskTitle | type) == "string"; "lastSession.tasks[\($e.key)].taskTitle missing or not a string"),
+        check(($e.value.status | type) == "string"; "lastSession.tasks[\($e.key)].status missing or not a string")
+      )
+    ] | .[]
+  ' "$stats_file" 2>&1)"
+  if [[ -n "$err" ]]; then
+    echo "warn: $stats_file doesn't match docs/stats-schema.json:"
+    echo "$err" | sed 's/^/  - /'
+  fi
+}
+
+# Appends this run's session object (same shape as lastSession) as one line
+# to stats/<repo>-history.jsonl. Unlike lastSession -- overwritten every run
+# -- this is append-only, so it's the actual time series a future cost/
+# completion-rate dashboard would read from, without ever needing to re-parse
+# raw logs the way building this feature in the first place required. Adds
+# repo (self-describing if lines from multiple repos are ever concatenated)
+# and ranAt (an actual timestamp -- date alone doesn't disambiguate multiple
+# runs on the same day).
+append_session_history() {
+  local name="$1" session_json="$2"
+  jq -c --arg repo "$name" --arg ranAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    '. + {repo: $repo, ranAt: $ranAt}' <<< "$session_json" >> "stats/$name-history.jsonl"
+}
+
 # Folds this run_repo() invocation's whole-run totals (every dispatch made
 # this call: every attempted task plus housekeeping -- accumulated by the
 # caller from each update_stats() call's US_* return values) into
@@ -332,14 +380,15 @@ update_stats() {
 # informative on its own.) tasks_json is a JSON array (built by the caller
 # from record_task_entry()'s accumulated entries, "[]" if there were none --
 # e.g. override-prompt mode) giving the per-task breakdown at a glance:
-# which task, what it cost, how many turns, whether it finished.
+# which task, what it cost, how many turns, whether it finished. Also
+# appends this run to stats/<repo>-history.jsonl -- see
+# append_session_history() above.
 record_session_totals() {
   local name="$1" calls="$2" cost="$3" duration_s="$4" turns="$5" cache_read="$6" cache_creation="$7" tasks_json="${8:-[]}"
   local stats_file="stats/$name.json"
-  local prev_json="{}"
-  [[ -f "$stats_file" ]] && prev_json="$(cat "$stats_file")"
-  jq -n \
-    --argjson prev "$prev_json" \
+
+  local session_obj
+  session_obj="$(jq -n \
     --arg date "$(date +%F)" \
     --argjson calls "$calls" \
     --argjson cost "$cost" \
@@ -348,18 +397,25 @@ record_session_totals() {
     --argjson cache_read "$cache_read" \
     --argjson cache_creation "$cache_creation" \
     --argjson tasks "$tasks_json" \
-    '$prev + {
-      lastSession: {
-        date: $date,
-        calls: $calls,
-        cost_usd: $cost,
-        duration_s: $duration_s,
-        num_turns: $turns,
-        cache_read_tokens: $cache_read,
-        cache_creation_tokens: $cache_creation,
-        tasks: $tasks
-      }
-    }' > "$stats_file"
+    '{
+      date: $date,
+      calls: $calls,
+      cost_usd: $cost,
+      duration_s: $duration_s,
+      num_turns: $turns,
+      cache_read_tokens: $cache_read,
+      cache_creation_tokens: $cache_creation,
+      tasks: $tasks
+    }')"
+
+  local prev_json="{}"
+  [[ -f "$stats_file" ]] && prev_json="$(cat "$stats_file")"
+  jq -n --argjson prev "$prev_json" --argjson session "$session_obj" \
+    '$prev + {lastSession: $session}' > "$stats_file"
+
+  validate_stats_shape "$stats_file"
+  append_session_history "$name" "$session_obj"
+
   echo "=== $name: this run cost \$$cost across $calls subprocess call(s), $turns turns, $cache_read cache-read tokens ==="
 }
 
