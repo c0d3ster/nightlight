@@ -282,12 +282,18 @@ extract_task_result() {
 # closing "result" event) into stats/<repo>.json's running totals. Local-only,
 # gitignored -- never committed, never touches the target repo. Called once
 # per dispatched subprocess (each task, plus housekeeping), so "sessions" here
-# means individual claude -p calls, not runs of overnight.sh.
+# means individual claude -p calls, not runs of overnight.sh. Also sets
+# US_COST/US_DURATION_S/US_TURNS/US_CACHE_READ/US_CACHE_CREATION (plain,
+# non-local assignments -- same other-return-value pattern as dispatch()'s
+# DISPATCH_TMP_RAW) to this one call's own numbers, all zeroed if the result
+# event was missing, so run_repo() can roll them into a whole-run total
+# without re-parsing the log itself.
 update_stats() {
   local name="$1" raw_log="$2"
   mkdir -p stats
   local stats_file="stats/$name.json"
   local result_line; result_line="$(jq -c 'select(.type == "result")' "$raw_log" | tail -n1)"
+  US_COST=0; US_DURATION_S=0; US_TURNS=0; US_CACHE_READ=0; US_CACHE_CREATION=0
   if [[ -z "$result_line" ]]; then
     echo "warn: no result event in $raw_log, skipping stats update"
     return 0
@@ -297,23 +303,120 @@ update_stats() {
   jq -n \
     --argjson prev "$prev_json" \
     --argjson result "$result_line" \
-    --arg date "$(date +%F)" \
     '{
       sessions: (($prev.sessions // 0) + 1),
       total_cost_usd: (($prev.total_cost_usd // 0) + $result.total_cost_usd),
       total_duration_s: (($prev.total_duration_s // 0) + ($result.duration_ms / 1000 | floor)),
       total_turns: (($prev.total_turns // 0) + $result.num_turns),
       total_cache_read_tokens: (($prev.total_cache_read_tokens // 0) + ($result.usage.cache_read_input_tokens // 0)),
-      total_cache_creation_tokens: (($prev.total_cache_creation_tokens // 0) + ($result.usage.cache_creation_input_tokens // 0)),
-      lastRun: {
-        date: $date,
-        cost_usd: $result.total_cost_usd,
-        duration_s: ($result.duration_ms / 1000 | floor),
-        num_turns: $result.num_turns,
-        cache_read_tokens: ($result.usage.cache_read_input_tokens // 0),
-        cache_creation_tokens: ($result.usage.cache_creation_input_tokens // 0)
-      }
+      total_cache_creation_tokens: (($prev.total_cache_creation_tokens // 0) + ($result.usage.cache_creation_input_tokens // 0))
     }' > "$stats_file"
+
+  US_COST="$(jq -n --argjson r "$result_line" '$r.total_cost_usd')"
+  US_DURATION_S="$(jq -n --argjson r "$result_line" '$r.duration_ms / 1000 | floor')"
+  US_TURNS="$(jq -n --argjson r "$result_line" '$r.num_turns')"
+  US_CACHE_READ="$(jq -n --argjson r "$result_line" '$r.usage.cache_read_input_tokens // 0')"
+  US_CACHE_CREATION="$(jq -n --argjson r "$result_line" '$r.usage.cache_creation_input_tokens // 0')"
+}
+
+# Hand-written structural self-check for stats/<repo>.json against
+# docs/stats-schema.json -- no schema validator dependency in this repo (see
+# that file's own header for why), so this is deliberately not exhaustive,
+# just enough to catch a future edit silently breaking the documented shape.
+# Warns, never aborts a run: a stats-file format bug is never worth losing
+# real task work over.
+validate_stats_shape() {
+  local stats_file="$1"
+  local err
+  err="$(jq -r '
+    def check(cond; msg): if cond then empty else msg end;
+    [
+      check(.sessions | type == "number"; "sessions missing or not a number"),
+      check(.total_cost_usd | type == "number"; "total_cost_usd missing or not a number"),
+      check(.total_duration_s | type == "number"; "total_duration_s missing or not a number"),
+      check(.total_turns | type == "number"; "total_turns missing or not a number"),
+      check((.lastSession | type) == "object"; "lastSession missing or not an object"),
+      check((.lastSession.date | type) == "string"; "lastSession.date missing or not a string"),
+      check((.lastSession.calls | type) == "number"; "lastSession.calls missing or not a number"),
+      check((.lastSession.cost_usd | type) == "number"; "lastSession.cost_usd missing or not a number"),
+      check((.lastSession.tasks | type) == "array"; "lastSession.tasks missing or not an array"),
+      (.lastSession.tasks // [] | to_entries[] | . as $e |
+        check(($e.value.taskNumber | type) == "number"; "lastSession.tasks[\($e.key)].taskNumber missing or not a number"),
+        check(($e.value.taskTitle | type) == "string"; "lastSession.tasks[\($e.key)].taskTitle missing or not a string"),
+        check(($e.value.status | type) == "string"; "lastSession.tasks[\($e.key)].status missing or not a string")
+      )
+    ] | .[]
+  ' "$stats_file" 2>&1)"
+  if [[ -n "$err" ]]; then
+    echo "warn: $stats_file doesn't match docs/stats-schema.json:"
+    echo "$err" | sed 's/^/  - /'
+  fi
+}
+
+# Appends this run's session object (same shape as lastSession) as one line
+# to stats/<repo>-history.jsonl. Unlike lastSession -- overwritten every run
+# -- this is append-only, so it's the actual time series a future cost/
+# completion-rate dashboard would read from, without ever needing to re-parse
+# raw logs the way building this feature in the first place required. Adds
+# repo (self-describing if lines from multiple repos are ever concatenated)
+# and ranAt (an actual timestamp -- date alone doesn't disambiguate multiple
+# runs on the same day).
+append_session_history() {
+  local name="$1" session_json="$2"
+  jq -c --arg repo "$name" --arg ranAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    '. + {repo: $repo, ranAt: $ranAt}' <<< "$session_json" >> "stats/$name-history.jsonl"
+}
+
+# Folds this run_repo() invocation's whole-run totals (every dispatch made
+# this call: every attempted task plus housekeeping -- accumulated by the
+# caller from each update_stats() call's US_* return values) into
+# stats/<repo>.json as lastSession, distinct from total_* (lifetime across
+# every run_repo() invocation ever). This is the "what did this whole
+# overnight run cost me" number -- previously you had to either sum per-task
+# numbers out of the raw logs by hand, or read total_* before and after and
+# subtract. (There's deliberately no per-dispatch "lastRun" here: with one
+# subprocess per task, the last dispatch of a normal run is always
+# housekeeping, whose prompt barely varies call to call -- that number isn't
+# informative on its own.) tasks_json is a JSON array (built by the caller
+# from record_task_entry()'s accumulated entries, "[]" if there were none --
+# e.g. override-prompt mode) giving the per-task breakdown at a glance:
+# which task, what it cost, how many turns, whether it finished. Also
+# appends this run to stats/<repo>-history.jsonl -- see
+# append_session_history() above.
+record_session_totals() {
+  local name="$1" calls="$2" cost="$3" duration_s="$4" turns="$5" cache_read="$6" cache_creation="$7" tasks_json="${8:-[]}"
+  local stats_file="stats/$name.json"
+
+  local session_obj
+  session_obj="$(jq -n \
+    --arg date "$(date +%F)" \
+    --argjson calls "$calls" \
+    --argjson cost "$cost" \
+    --argjson duration_s "$duration_s" \
+    --argjson turns "$turns" \
+    --argjson cache_read "$cache_read" \
+    --argjson cache_creation "$cache_creation" \
+    --argjson tasks "$tasks_json" \
+    '{
+      date: $date,
+      calls: $calls,
+      cost_usd: $cost,
+      duration_s: $duration_s,
+      num_turns: $turns,
+      cache_read_tokens: $cache_read,
+      cache_creation_tokens: $cache_creation,
+      tasks: $tasks
+    }')"
+
+  local prev_json="{}"
+  [[ -f "$stats_file" ]] && prev_json="$(cat "$stats_file")"
+  jq -n --argjson prev "$prev_json" --argjson session "$session_obj" \
+    '$prev + {lastSession: $session}' > "$stats_file"
+
+  validate_stats_shape "$stats_file"
+  append_session_history "$name" "$session_obj"
+
+  echo "=== $name: this run cost \$$cost across $calls subprocess call(s), $turns turns, $cache_read cache-read tokens ==="
 }
 
 run_repo() {
@@ -338,6 +441,7 @@ run_repo() {
       || echo "warn: claude exited non-zero for $name's override-prompt session -- check $errlog"
     update_stats "$name" "$DISPATCH_TMP_RAW"
     rm -f "$DISPATCH_TMP_RAW"
+    record_session_totals "$name" 1 "$US_COST" "$US_DURATION_S" "$US_TURNS" "$US_CACHE_READ" "$US_CACHE_CREATION"
     [[ -s "$errlog" ]] || rm -f "$errlog"
     return 0
   fi
@@ -357,6 +461,39 @@ run_repo() {
   local -A stack_branch=()
   local attempted=0 consecutive_failures=0
   local run_summary="" skipped_summary=""
+  local session_calls=0 session_cost=0 session_duration=0 session_turns=0 session_cache_read=0 session_cache_creation=0
+
+  # Folds one update_stats() call's US_* return values into this run_repo()
+  # invocation's running total -- called after every dispatch (each task,
+  # plus housekeeping), so record_session_totals() at the end reflects the
+  # whole run, not just the last subprocess.
+  accumulate_session() {
+    session_calls=$((session_calls+1))
+    session_cost="$(awk -v a="$session_cost" -v b="$US_COST" 'BEGIN{print a+b}')"
+    session_duration=$((session_duration+US_DURATION_S))
+    session_turns=$((session_turns+US_TURNS))
+    session_cache_read=$((session_cache_read+US_CACHE_READ))
+    session_cache_creation=$((session_cache_creation+US_CACHE_CREATION))
+  }
+
+  # Appends one task dispatch's own numbers (still sitting in US_* from the
+  # update_stats() call just made for it) as an entry in this run's tasks
+  # array -- housekeeping isn't a numbered task, so it's never added here,
+  # only the per-task dispatch loop below calls this.
+  local -a session_task_entries=()
+  record_task_entry() {
+    local num="$1" title="$2" status="$3"
+    session_task_entries+=("$(jq -nc \
+      --argjson num "$num" \
+      --arg title "$title" \
+      --arg status "$status" \
+      --argjson cost "$US_COST" \
+      --argjson duration_s "$US_DURATION_S" \
+      --argjson turns "$US_TURNS" \
+      --argjson cache_read "$US_CACHE_READ" \
+      --argjson cache_creation "$US_CACHE_CREATION" \
+      '{taskNumber: $num, taskTitle: $title, status: $status, cost_usd: $cost, duration_s: $duration_s, num_turns: $turns, cache_read_tokens: $cache_read, cache_creation_tokens: $cache_creation}')")
+  }
 
   local rec num stack blockfile
   for rec in "${task_records[@]}"; do
@@ -384,6 +521,9 @@ run_repo() {
       stack_notes="$(cat "$repo_path/docs/stack-notes/$stack.md")"
     fi
 
+    local task_title
+    task_title="$(sed -n '1p' "$blockfile" | sed -E 's/^- \[ \] #[0-9]+ (\[stack: [^]]+\] )?\*\*(.*)\*\*.*$/\2/')"
+
     local task_prompt
     task_prompt="$(build_task_prompt "$(cat "$blockfile")" "$num" "$stack" "$base_branch" "$stack_notes")"
 
@@ -396,12 +536,16 @@ run_repo() {
       if [[ "$consecutive_failures" -ge 2 ]]; then
         echo "error: two consecutive dispatch failures for $name, aborting this repo's run"
         update_stats "$name" "$DISPATCH_TMP_RAW"
+        accumulate_session
+        record_task_entry "$num" "$task_title" "dispatch-error"
+        record_session_totals "$name" "$session_calls" "$session_cost" "$session_duration" "$session_turns" "$session_cache_read" "$session_cache_creation" "$(printf '%s\n' "${session_task_entries[@]}" | jq -s '.')"
         rm -f "$DISPATCH_TMP_RAW"
         rm -rf "$blockdir"
         return 1
       fi
     fi
     update_stats "$name" "$DISPATCH_TMP_RAW"
+    accumulate_session
 
     local task_result; task_result="$(extract_task_result "$DISPATCH_TMP_RAW")"
     rm -f "$DISPATCH_TMP_RAW"
@@ -431,6 +575,10 @@ $task_result"
       fi
     fi
 
+    local reported_status
+    reported_status="$(sed -n "s/^TASK_RESULT: #$num status=\\([^ ]*\\).*/\\1/p" <<< "$task_result")"
+    record_task_entry "$num" "$task_title" "${reported_status:-unknown}"
+
     attempted=$((attempted+1))
   done
 
@@ -446,7 +594,11 @@ $task_result"
   dispatch "$housekeeping_prompt" "$repo_path" "$raw_log" "$readable_log" "$errlog" \
     || echo "warn: claude exited non-zero for $name's housekeeping session -- check $errlog"
   update_stats "$name" "$DISPATCH_TMP_RAW"
+  accumulate_session
   rm -f "$DISPATCH_TMP_RAW"
+
+  local tasks_json; tasks_json="$(printf '%s\n' "${session_task_entries[@]}" | jq -s '.')"
+  record_session_totals "$name" "$session_calls" "$session_cost" "$session_duration" "$session_turns" "$session_cache_read" "$session_cache_creation" "$tasks_json"
 
   [[ -s "$errlog" ]] || rm -f "$errlog"
 }

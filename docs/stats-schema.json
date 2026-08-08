@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/c0d3ster/nightlight/docs/stats-schema.json",
+  "title": "nightlight stats/<repo>.json and stats/<repo>-history.jsonl",
+  "description": "Local, gitignored cost/time reference for one target repo -- see README.md's stats.sh section. Written only by overnight.sh's update_stats() and record_session_totals(). There is no schema validator dependency in this repo (nightlight has none at all, by design); overnight.sh's validate_stats_shape() is a small hand-written jq structural check kept manually in sync with this file, not a generated one -- if you add or rename a field here, update that function too.",
+  "type": "object",
+  "required": ["sessions", "total_cost_usd", "total_duration_s", "total_turns"],
+  "properties": {
+    "sessions": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Lifetime count of individual `claude -p` dispatches (each task, plus housekeeping) -- not runs of overnight.sh."
+    },
+    "total_cost_usd": { "type": "number", "minimum": 0 },
+    "total_duration_s": { "type": "integer", "minimum": 0 },
+    "total_turns": { "type": "integer", "minimum": 0 },
+    "total_cache_read_tokens": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Absent on files predating cache-token tracking (task #2); always present on anything written by the current code."
+    },
+    "total_cache_creation_tokens": { "type": "integer", "minimum": 0 },
+    "lastSession": {
+      "$ref": "#/$defs/session",
+      "description": "The most recently completed overnight.sh invocation for this repo -- overwritten every run. stats/<repo>-history.jsonl holds one of these per run, append-only, for anything wanting a real time series."
+    }
+  },
+  "$defs": {
+    "session": {
+      "type": "object",
+      "required": ["date", "calls", "cost_usd", "duration_s", "num_turns", "tasks"],
+      "properties": {
+        "date": { "type": "string", "format": "date" },
+        "repo": {
+          "type": "string",
+          "description": "Only present in stats/<repo>-history.jsonl entries, not lastSession -- makes a line self-describing if ever concatenated across repos."
+        },
+        "ranAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Only present in stats/<repo>-history.jsonl entries -- date alone doesn't disambiguate multiple runs on the same day."
+        },
+        "calls": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Every dispatch made by this run_repo() invocation: every attempted task plus housekeeping."
+        },
+        "cost_usd": { "type": "number", "minimum": 0 },
+        "duration_s": { "type": "integer", "minimum": 0 },
+        "num_turns": { "type": "integer", "minimum": 0 },
+        "cache_read_tokens": { "type": "integer", "minimum": 0 },
+        "cache_creation_tokens": { "type": "integer", "minimum": 0 },
+        "tasks": {
+          "type": "array",
+          "description": "One entry per dispatched task this run, in dispatch order. Housekeeping is never included here -- it isn't a numbered task. Empty on runs predating this field (see README) and on --override-prompt runs.",
+          "items": { "$ref": "#/$defs/taskEntry" }
+        }
+      }
+    },
+    "taskEntry": {
+      "type": "object",
+      "required": ["taskNumber", "taskTitle", "status", "cost_usd", "duration_s", "num_turns"],
+      "properties": {
+        "taskNumber": { "type": "integer", "minimum": 1 },
+        "taskTitle": { "type": "string" },
+        "status": {
+          "enum": ["done", "blocked", "needs-human", "unknown", "dispatch-error"],
+          "description": "done/blocked/needs-human come from the task's own TASK_RESULT line; unknown means it never emitted a valid one; dispatch-error means claude itself exited non-zero (see overnight.sh's two-consecutive-failures abort path)."
+        },
+        "cost_usd": { "type": "number", "minimum": 0 },
+        "duration_s": { "type": "integer", "minimum": 0 },
+        "num_turns": { "type": "integer", "minimum": 0 },
+        "cache_read_tokens": { "type": "integer", "minimum": 0 },
+        "cache_creation_tokens": { "type": "integer", "minimum": 0 }
+      }
+    }
+  }
+}
