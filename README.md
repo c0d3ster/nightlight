@@ -80,7 +80,7 @@ Wrapper for `/discover-tasks`, so it runs against the right repo (or repos) with
 ./discover.sh                      # every repo under PROJECT_REPOS_DIR
 ```
 
-Same "adds the target repo and submits the slash command as the first message" shape as `plan.sh` below — a normal interactive session, full back-and-forth, nothing written until you approve. The no-arg form attaches the whole `PROJECT_REPOS_DIR` as one `--add-dir` (discover has no `TASKS.md` prerequisite, so every repo qualifies — see the `additionalDirectories` note above for why that's fine here specifically), then mines every repo's memory in parallel and walks you through approving each repo's candidates one at a time, in order. Each repo's Finalize step now also merges its own PR once you've approved it — see Safety model below.
+Same "adds the target repo and submits the slash command as the first message" shape as `plan.sh` below — a normal interactive session, full back-and-forth, nothing written until you approve. The no-arg form attaches the whole `PROJECT_REPOS_DIR` as one `--add-dir` (discover has no `TASKS.md` prerequisite, so every repo qualifies — see the `additionalDirectories` note above for why that's fine here specifically), then mines every repo's memory in parallel and walks you through approving each repo's candidates one at a time, in order. Each repo's Finalize step merges its own PR once you've approved it — see Safety model below.
 
 Or via the `package.json` script (see Scripts below): `pnpm discover [repo] [--scan]`.
 
@@ -93,7 +93,7 @@ Wrapper for interactive planning sessions, so `/plan-tasks` runs against the rig
 ./plan.sh              # every repo under PROJECT_REPOS_DIR with open, unchecked TASKS.md work
 ```
 
-`claude "<prompt>"` (no `-p`) starts a normal interactive session with `/plan-tasks` pre-submitted as the first message, then stays interactive: the proposal comes back, you review it, and only after you approve does it write to `TASKS.md`. The no-arg form first checks every repo under `PROJECT_REPOS_DIR` for a `TASKS.md` with unchecked items (same check `overnight.sh`'s no-arg mode uses), attaches only the ones that qualify, investigates every repo's items in parallel, then walks you through approving and finalizing each qualifying repo in turn. Each repo's Finalize step now also merges its own PR once you've approved it — see Safety model below.
+`claude "<prompt>"` (no `-p`) starts a normal interactive session with `/plan-tasks` pre-submitted as the first message, then stays interactive: the proposal comes back, you review it, and only after you approve does it write to `TASKS.md`. The no-arg form first checks every repo under `PROJECT_REPOS_DIR` for a `TASKS.md` with unchecked items (same check `overnight.sh`'s no-arg mode uses), attaches only the ones that qualify, investigates every repo's items in parallel, then walks you through approving and finalizing each qualifying repo in turn. Each repo's Finalize step merges its own PR once you've approved it — see Safety model below.
 
 Or via the `package.json` script (see Scripts below): `pnpm plan [repo]`.
 
@@ -109,15 +109,35 @@ Local, gitignored cost/time reference — never committed, never touches a targe
   "total_turns": 2870,
   "total_cache_read_tokens": 9482113,
   "total_cache_creation_tokens": 205774,
-  "lastRun": {"date": "2026-08-01", "cost_usd": 4.82, "duration_s": 9310, "num_turns": 214, "cache_read_tokens": 361200, "cache_creation_tokens": 18400}
+  "lastSession": {
+    "date": "2026-08-01",
+    "calls": 3,
+    "cost_usd": 6.56,
+    "duration_s": 2025,
+    "num_turns": 147,
+    "cache_read_tokens": 11759541,
+    "cache_creation_tokens": 235138,
+    "tasks": [
+      {"taskNumber": 18, "taskTitle": "Strip sprite background", "status": "done", "cost_usd": 1.30, "duration_s": 445, "num_turns": 28, "cache_read_tokens": 1568035, "cache_creation_tokens": 71886},
+      {"taskNumber": 19, "taskTitle": "Some other task", "status": "needs-human", "cost_usd": 4.88, "duration_s": 1449, "num_turns": 104, "cache_read_tokens": 9657573, "cache_creation_tokens": 138775}
+    ]
+  }
 }
 ```
 
-`pnpm stats some-repo` prints that repo's running totals. `pnpm stats` (no arg) sums the `total_*` fields across every `stats/*.json` file, for a comprehensive total across every repo worked from this nightlight instance. It's a snapshot, not a log — each run overwrites the file with updated totals, so there's nothing to grep through, just current numbers. `total_cache_read_tokens` is the one to watch when judging whether the per-task dispatch model (see How it works above) is actually keeping cost down: it should grow roughly linearly with work done, not compound the way a single continuous session across many tasks does.
+Two granularities live here:
+- `total_*` — lifetime across every `run_repo()` invocation ever, for this repo.
+- `lastSession` — every dispatch made by the most recent `overnight.sh` invocation for this repo (every task attempted plus housekeeping), rolled into one number, plus a `tasks` breakdown (one entry per dispatched task, housekeeping excluded) so you can see which task cost what and how it finished at a glance. This is "what did last night's run actually cost me" — printed to stdout at the end of the run too, so you don't need to open this file or dig through logs just to see it. (There's deliberately no per-dispatch `lastRun` here: with one subprocess per task, the last dispatch of a normal run is always housekeeping, whose prompt barely varies call to call, so that number in isolation isn't informative.)
 
-## .claude/skills/plan-tasks/SKILL.md and .claude/skills/discover-tasks/SKILL.md
+`pnpm stats some-repo` prints that repo's running totals. `pnpm stats` (no arg) sums the `total_*` fields across every `stats/*.json` file, for a comprehensive total across every repo worked from this nightlight instance. `stats/<repo>.json` itself is a snapshot, not a log — each run overwrites `lastSession` with the latest, so there's nothing to grep through, just current numbers. `total_cache_read_tokens` is the one to watch when judging whether the per-task dispatch model (see How it works above) is actually keeping cost down: it should grow roughly linearly with work done, not compound the way a single continuous session across many tasks does.
 
-`/plan-tasks` does the task breakdown that makes the overnight run actually work — `overnight.sh` executes a queue, it doesn't design one. `/discover-tasks` mines a repo's own memory (and, with `--scan`, its codebase) for task candidates before that. The full, current behavior of each lives in its `SKILL.md` (not reproduced here — this file drifted out of sync with the skills once before and isn't worth re-duplicating), but the shape of both:
+**docs/stats-schema.json** documents the shape above (committed, unlike the data itself) — the contract anything reading these files should code against. `overnight.sh`'s `validate_stats_shape()` is a small hand-written jq structural check kept manually in sync with it (this repo has zero runtime dependencies by design, so no real schema-validator library is pulled in for one local bookkeeping file); it warns on a mismatch rather than failing the run, since a stats-file format bug is never worth losing real task work over.
+
+**stats/\<repo\>-history.jsonl** is the actual time series: unlike `lastSession` (overwritten every run), every run appends one line here (the same shape as `lastSession`, plus `repo` and an actual `ranAt` timestamp since `date` alone doesn't disambiguate same-day runs). This is what a future cost/completion-rate-over-time dashboard should read from, without re-parsing raw `logs/` files run by run.
+
+## Skills
+
+`/plan-tasks` does the task breakdown that makes the overnight run actually work — `overnight.sh` executes a queue, it doesn't design one. `/discover-tasks` mines a repo's own memory (and, with `--scan`, its codebase) for task candidates before that. The full, current behavior of each lives in its own `SKILL.md` (`.claude/skills/plan-tasks/SKILL.md` and `.claude/skills/discover-tasks/SKILL.md`, not reproduced here to avoid drift), but the shape of both:
 
 - Investigate/mine in parallel (one dispatched agent per item or per repo), then synthesize and ask for approval back in the main thread — never one-at-a-time in the main thread, and never write anything before you've approved it.
 - `#<n>` numbering and `[stack: <name>]` assignment (`plan-tasks`) — a stable identity per task, and the dependency/shared-file analysis that makes stacked overnight PRs mergeable in the right order. Deliberately biased toward stacking ("when in doubt, stack") since a false `solo` risks two PRs conflicting with no ordering to resolve it.
@@ -151,7 +171,7 @@ Thin `package.json` wrappers around the shell scripts — no dependencies, nothi
 ./overnight.sh some-repo
 ```
 
-`discover.sh`/`plan.sh` with no repo run across every repo under `PROJECT_REPOS_DIR` (see `## discover.sh` / `## plan.sh` above) — but they're still two separate commands, run whenever you want; discover doesn't automatically feed into plan. Since discover's Finalize now merges its own PR (see Safety model below), running `plan` any time after `discover` already sees whatever discover found, with no manual merge step in between.
+`discover.sh`/`plan.sh` with no repo run across every repo under `PROJECT_REPOS_DIR` (see `## discover.sh` / `## plan.sh` above) — but they're still two separate commands, run whenever you want; discover doesn't automatically feed into plan. Since discover's Finalize merges its own PR (see Safety model below), running `plan` any time after `discover` already sees whatever discover found, with no manual merge step in between.
 
 `./nightlight.sh some-repo` (see `## nightlight.sh` above) is the equivalent of the three commands above, chained into one, with a confirmation pause before the `overnight.sh` step.
 
