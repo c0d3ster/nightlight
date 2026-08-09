@@ -282,12 +282,11 @@ extract_task_result() {
 # closing "result" event) into stats/<repo>.json's running totals. Local-only,
 # gitignored -- never committed, never touches the target repo. Called once
 # per dispatched subprocess (each task, plus housekeeping), so "sessions" here
-# means individual claude -p calls, not runs of overnight.sh. Also sets
+# means individual claude -p calls, not runs of overnight.sh. Sets
 # US_COST/US_DURATION_S/US_TURNS/US_CACHE_READ/US_CACHE_CREATION (plain,
-# non-local assignments -- same other-return-value pattern as dispatch()'s
-# DISPATCH_TMP_RAW) to this one call's own numbers, all zeroed if the result
-# event was missing, so run_repo() can roll them into a whole-run total
-# without re-parsing the log itself.
+# non-local -- this function's return values) to this call's own numbers,
+# zeroed if the result event was missing, for run_repo() to roll into a
+# whole-run total.
 update_stats() {
   local name="$1" raw_log="$2"
   mkdir -p stats
@@ -319,12 +318,10 @@ update_stats() {
   US_CACHE_CREATION="$(jq -n --argjson r "$result_line" '$r.usage.cache_creation_input_tokens // 0')"
 }
 
-# Hand-written structural self-check for stats/<repo>.json against
-# docs/stats-schema.json -- no schema validator dependency in this repo (see
-# that file's own header for why), so this is deliberately not exhaustive,
-# just enough to catch a future edit silently breaking the documented shape.
-# Warns, never aborts a run: a stats-file format bug is never worth losing
-# real task work over.
+# Structural self-check for stats/<repo>.json against docs/stats-schema.json
+# (see that file's header re: no schema validator dependency here). Not
+# exhaustive -- just enough to catch a future edit breaking the documented
+# shape. Warns, never aborts a run.
 validate_stats_shape() {
   local stats_file="$1"
   local err
@@ -354,35 +351,25 @@ validate_stats_shape() {
 }
 
 # Appends this run's session object (same shape as lastSession) as one line
-# to stats/<repo>-history.jsonl. Unlike lastSession -- overwritten every run
-# -- this is append-only, so it's the actual time series a future cost/
-# completion-rate dashboard would read from, without ever needing to re-parse
-# raw logs the way building this feature in the first place required. Adds
-# repo (self-describing if lines from multiple repos are ever concatenated)
-# and ranAt (an actual timestamp -- date alone doesn't disambiguate multiple
-# runs on the same day).
+# to stats/<repo>-history.jsonl -- an append-only time series, unlike
+# lastSession which is overwritten every run. Adds repo (self-describing if
+# lines from multiple repos are ever concatenated) and ranAt (date alone
+# doesn't disambiguate multiple runs on the same day).
 append_session_history() {
   local name="$1" session_json="$2"
   jq -c --arg repo "$name" --arg ranAt "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
     '. + {repo: $repo, ranAt: $ranAt}' <<< "$session_json" >> "stats/$name-history.jsonl"
 }
 
-# Folds this run_repo() invocation's whole-run totals (every dispatch made
-# this call: every attempted task plus housekeeping -- accumulated by the
-# caller from each update_stats() call's US_* return values) into
-# stats/<repo>.json as lastSession, distinct from total_* (lifetime across
-# every run_repo() invocation ever). This is the "what did this whole
-# overnight run cost me" number -- previously you had to either sum per-task
-# numbers out of the raw logs by hand, or read total_* before and after and
-# subtract. (There's deliberately no per-dispatch "lastRun" here: with one
-# subprocess per task, the last dispatch of a normal run is always
-# housekeeping, whose prompt barely varies call to call -- that number isn't
-# informative on its own.) tasks_json is a JSON array (built by the caller
-# from record_task_entry()'s accumulated entries, "[]" if there were none --
-# e.g. override-prompt mode) giving the per-task breakdown at a glance:
-# which task, what it cost, how many turns, whether it finished. Also
-# appends this run to stats/<repo>-history.jsonl -- see
-# append_session_history() above.
+# Writes this run_repo() invocation's whole-run totals (every dispatch this
+# call made -- every attempted task plus housekeeping, accumulated by the
+# caller from each update_stats() call's US_* values) into stats/<repo>.json
+# as lastSession -- "what did this whole overnight run cost me," distinct
+# from total_* (lifetime across every run_repo() invocation ever). tasks_json
+# is a JSON array (built by the caller from record_task_entry(), "[]" if none
+# -- e.g. override-prompt mode) giving per-task cost/turns/status at a
+# glance. Also appends to stats/<repo>-history.jsonl via
+# append_session_history().
 record_session_totals() {
   local name="$1" calls="$2" cost="$3" duration_s="$4" turns="$5" cache_read="$6" cache_creation="$7" tasks_json="${8:-[]}"
   local stats_file="stats/$name.json"
@@ -463,10 +450,9 @@ run_repo() {
   local run_summary="" skipped_summary=""
   local session_calls=0 session_cost=0 session_duration=0 session_turns=0 session_cache_read=0 session_cache_creation=0
 
-  # Folds one update_stats() call's US_* return values into this run_repo()
-  # invocation's running total -- called after every dispatch (each task,
-  # plus housekeeping), so record_session_totals() at the end reflects the
-  # whole run, not just the last subprocess.
+  # Folds one update_stats() call's US_* values into this run_repo()
+  # invocation's running total. Called after every dispatch (each task plus
+  # housekeeping) so record_session_totals() reflects the whole run.
   accumulate_session() {
     session_calls=$((session_calls+1))
     session_cost="$(awk -v a="$session_cost" -v b="$US_COST" 'BEGIN{print a+b}')"
@@ -476,10 +462,9 @@ run_repo() {
     session_cache_creation=$((session_cache_creation+US_CACHE_CREATION))
   }
 
-  # Appends one task dispatch's own numbers (still sitting in US_* from the
-  # update_stats() call just made for it) as an entry in this run's tasks
-  # array -- housekeeping isn't a numbered task, so it's never added here,
-  # only the per-task dispatch loop below calls this.
+  # Appends one task's numbers (from the US_* just set by update_stats()) as
+  # an entry in this run's tasks array. Only the per-task dispatch loop below
+  # calls this -- housekeeping isn't a numbered task.
   local -a session_task_entries=()
   record_task_entry() {
     local num="$1" title="$2" status="$3"
