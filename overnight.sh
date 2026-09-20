@@ -227,46 +227,109 @@ Treat the TASK_RESULT lines above as a starting point, not ground truth -- a tas
   printf '%s' "$p"
 }
 
+# Scans a dispatch attempt's raw NDJSON for the most recent rate_limit_event
+# and decides whether it reflects a hard block on the rolling five-hour usage
+# window -- every session emits this event, blocked or not, so presence alone
+# means nothing. rate_limit_info.status is one of "allowed", "allowed_warning"
+# (approaching the limit, still succeeding), or "rejected" (the actual 429);
+# only "rejected" counts. Scoped to rateLimitType == "five_hour" on purpose --
+# a seven_day/weekly block isn't something an unattended run should sleep
+# through, so that's left to the caller's normal failure handling instead.
+# Sets RATE_LIMIT_RESETS_AT (plain, non-local -- this function's return value)
+# to the reported resetsAt (unix seconds) when blocked, or "" otherwise.
+check_rate_limit_block() {
+  local raw_log="$1"
+  RATE_LIMIT_RESETS_AT=""
+
+  local info
+  info="$(jq -c 'select(.type == "rate_limit_event") | .rate_limit_info' "$raw_log" 2>/dev/null | tail -n1)"
+  [[ -z "$info" || "$info" == "null" ]] && return 0
+
+  local status rate_type resets_at
+  status="$(jq -r '.status // ""' <<< "$info")"
+  rate_type="$(jq -r '.rateLimitType // ""' <<< "$info")"
+  resets_at="$(jq -r '.resetsAt // empty' <<< "$info")"
+
+  [[ "$status" == "rejected" && "$rate_type" == "five_hour" && -n "$resets_at" ]] && RATE_LIMIT_RESETS_AT="$resets_at"
+  return 0
+}
+
 # Runs one claude -p subprocess with the given prompt against repo_path,
 # streaming it live (through format-stream.jq) and appending it to the run's
 # combined raw/readable/stderr logs. Sets DISPATCH_TMP_RAW (a plain, non-local
 # assignment -- this is dispatch()'s other return value) to a temp file holding
-# just this call's raw NDJSON, so the caller can pull a TASK_RESULT line out of
-# exactly this subprocess's output rather than the whole run's; the caller is
-# responsible for rm-ing it afterward. Returns claude's own exit status (not
-# the trailing tee's) so callers can tell a genuine claude failure (auth error,
-# missing format-stream.jq, etc.) apart from a normal run.
+# just the FINAL attempt's raw NDJSON, so the caller can pull a TASK_RESULT
+# line out of exactly that attempt's output rather than the whole run's; the
+# caller is responsible for rm-ing it afterward. Returns claude's own exit
+# status from the final attempt (not the trailing tee's) so callers can tell a
+# genuine claude failure (auth error, missing format-stream.jq, etc.) apart
+# from a normal run.
+#
+# If an attempt is cut short by the rolling five-hour usage window (detected
+# via check_rate_limit_block(), not just any failure), this pauses the whole
+# nightlight process with `sleep` until the window's own reported resetsAt and
+# retries the SAME prompt from scratch once the new window opens --
+# "resume-on-new-window." Every attempt's raw output still lands in
+# raw_log/errlog, even the paused ones. Capped at 3 pause-retries per call so
+# a bad resetsAt (clock skew, a stale/misread event) can't hang the run
+# forever; past that it falls through and returns the failed attempt like any
+# other dispatch failure.
 dispatch() {
   local prompt="$1" repo_path="$2" raw_log="$3" readable_log="$4" errlog="$5"
-  DISPATCH_TMP_RAW="$(mktemp)"
+  local pause_retries=0 claude_status=0
 
-  claude -p "$prompt" \
-    --model sonnet \
-    --permission-mode acceptEdits \
-    --settings .claude/settings.json \
-    --add-dir "$repo_path" \
-    --output-format stream-json \
-    --verbose \
-    2>>"$errlog" \
-    | tee "$DISPATCH_TMP_RAW" \
-    | jq -r -f format-stream.jq \
-    | tee -a "$readable_log"
-  local claude_status="${PIPESTATUS[0]}"
+  while true; do
+    DISPATCH_TMP_RAW="$(mktemp)"
 
-  cat "$DISPATCH_TMP_RAW" >> "$raw_log"
+    claude -p "$prompt" \
+      --model sonnet \
+      --permission-mode acceptEdits \
+      --settings .claude/settings.json \
+      --add-dir "$repo_path" \
+      --output-format stream-json \
+      --verbose \
+      2>>"$errlog" \
+      | tee "$DISPATCH_TMP_RAW" \
+      | jq -r -f format-stream.jq \
+      | tee -a "$readable_log"
+    claude_status="${PIPESTATUS[0]}"
 
-  # Append genuine tool/harness errors (is_error results - permission denials,
-  # bad exit codes, missing files) from just this call to the shared errlog.
-  jq -r '
-    select(.type == "user") | .message.content[]? |
-    select(.type == "tool_result" and .is_error == true) |
-    (if (.content | type) == "array" then
-      (.content | map(.text? // "") | join(" "))
-    else
-      (.content | tostring)
-    end) |
-    gsub("\\[[0-9;]*[a-zA-Z]"; "")
-  ' "$DISPATCH_TMP_RAW" >> "$errlog"
+    cat "$DISPATCH_TMP_RAW" >> "$raw_log"
+
+    # Append genuine tool/harness errors (is_error results - permission
+    # denials, bad exit codes, missing files) from just this attempt to the
+    # shared errlog.
+    jq -r '
+      select(.type == "user") | .message.content[]? |
+      select(.type == "tool_result" and .is_error == true) |
+      (if (.content | type) == "array" then
+        (.content | map(.text? // "") | join(" "))
+      else
+        (.content | tostring)
+      end) |
+      gsub("\\[[0-9;]*[a-zA-Z]"; "")
+    ' "$DISPATCH_TMP_RAW" >> "$errlog"
+
+    check_rate_limit_block "$DISPATCH_TMP_RAW"
+    local has_result
+    has_result="$(jq -c 'select(.type == "result")' "$DISPATCH_TMP_RAW" | tail -n1)"
+
+    # Only pause when the window block actually coincided with a failed/cut-
+    # short attempt -- a "rejected" event that the CLI itself recovered from
+    # (still exited 0 with a result) isn't worth pausing for.
+    if [[ -z "$RATE_LIMIT_RESETS_AT" || ( "$claude_status" -eq 0 && -n "$has_result" ) || "$pause_retries" -ge 3 ]]; then
+      break
+    fi
+
+    pause_retries=$((pause_retries+1))
+    local resume_at wait_s human_time
+    resume_at=$((RATE_LIMIT_RESETS_AT + 60))
+    wait_s=$((resume_at - $(date +%s)))
+    human_time="$(date -d "@$resume_at" 2>/dev/null || date -r "$resume_at" 2>/dev/null || echo "unix:$resume_at")"
+    echo "pausing: five-hour usage window exhausted (pause-retry $pause_retries/3), resuming ~$human_time"
+    rm -f "$DISPATCH_TMP_RAW"
+    [[ "$wait_s" -gt 0 ]] && sleep "$wait_s"
+  done
 
   return "$claude_status"
 }
