@@ -62,7 +62,7 @@ Discover and plan are done. Start the overnight run now? [y/N]
 
 Discover and plan never write or merge anything without your approval inside those sessions, so chaining them costs nothing extra. `overnight.sh` is different — unattended, potentially hours, real cost — so this is the one point where a chained command should make you deliberately opt in rather than sliding straight into an unattended run. Answering no exits cleanly with a reminder of the equivalent `./overnight.sh` command; nothing is lost, you can run it whenever you're ready.
 
-Every flag is supported and routed to whichever phase actually understands it — `--scan` goes to `discover.sh` only, and `overnight.sh`'s own flags (`--stop-after`, `--limit`, `--stack`, `--extra-instructions`, `--override-prompt`, see `### Limiting a run` below) are forwarded to the `overnight.sh` call verbatim, unvalidated by `nightlight.sh` itself — `overnight.sh` is the one source of truth for what each flag means and requires (e.g. its own single-repo rule for everything but `--limit`):
+Every flag is supported and routed to whichever phase actually understands it — `--scan` goes to `discover.sh` only, and `overnight.sh`'s own flags (`--stop-after`, `--limit`, `--stack`, `--extra-instructions`, `--override-prompt`, `--force`, see `### Limiting a run` below) are forwarded to the `overnight.sh` call verbatim, unvalidated by `nightlight.sh` itself — `overnight.sh` is the one source of truth for what each flag means and requires (e.g. its own single-repo rule for everything but `--limit` and `--force`):
 
 ```bash
 ./nightlight.sh some-repo --scan --stop-after 27
@@ -175,9 +175,9 @@ Thin `package.json` wrappers around the shell scripts — no dependencies, nothi
 
 `./nightlight.sh some-repo` (see `## nightlight.sh` above) is the equivalent of the three commands above, chained into one, with a confirmation pause before the `overnight.sh` step.
 
-`overnight.sh` resolves a bare name against `$PROJECT_REPOS_DIR` (from `.env`) or accepts a full path. Run it inside `tmux` or a terminal window you can leave open — closing the window kills the process. Disable sleep/hibernate for the duration.
+`overnight.sh` resolves a bare name against `$PROJECT_REPOS_DIR` (from `.env`) or accepts a full path. Run it inside `tmux` or a terminal window you can leave open. **Ctrl+C** stops the wrapper and kills any leftover `claude -p` still targeting the active repo (Windows included — the signal often never reaches `claude.exe`, so the trap does a process-tree kill instead). Closing the window does **not** reliably do that on Windows; the next `./overnight.sh` on that repo will refuse to start if a lock or leftover print-mode process is still there. Pass `--force` to kill leftovers and take the lock. Disable sleep/hibernate for the duration.
 
-Only run one repo at a time per machine (shared usage pool). Chain sequentially if you need more than one: `./overnight.sh repo-a && ./overnight.sh repo-b`.
+Only run one repo at a time per machine (shared usage pool). The per-repo lock also refuses a second `overnight.sh` against the same working tree, which is what used to produce colliding edits after a Ctrl+C that only killed the wrapper. Chain sequentially if you need more than one: `./overnight.sh repo-a && ./overnight.sh repo-b`.
 
 ### Limiting a run
 
@@ -188,13 +188,14 @@ Flags scope a single run without editing `TASKS.md` or `CLAUDE.md`. They *append
 ./overnight.sh some-repo --limit 3           # complete 3 tasks this run, then stop
 ./overnight.sh some-repo --stack auth        # only tasks in [stack: auth], skip every other stack
 ./overnight.sh some-repo --extra-instructions "double check the migration is reversible"
+./overnight.sh some-repo --force              # kill leftover claude -p / take a stale lock
 ```
 
 `--stop-after N` refers to a task's permanent `#<n>` number (see TASKS.md format below), not a count and not a position in the file. The agent works through tasks in file order and stops once it's completed task `#N`, without starting anything numbered higher — since numbers only increase down the file as tasks are added, this reliably targets one specific task, unlike a position-based count that would silently point somewhere else the moment an earlier task gets archived. Note this is a boundary check on the number, not a filter on the walk: if TASKS.md isn't in strict numeric order (e.g. `#5` was inserted above `#3`), the agent still works top-to-bottom, so it completes `#5` on the way to `#3` even though `5 > 3`.
 
 `--limit N` is the count-based counterpart: stop after dispatching N tasks this run, whatever their numbers happen to be or however each one turns out (done, `NEEDS HUMAN`, or `blocked` all count against the limit — it's a count of subprocesses run, not of successes). Use `--stop-after` when you want a specific task as the boundary; use `--limit` when you just want "do a few and stop." The two flags are deliberately separate rather than one overloaded flag (e.g. `5` vs `#5`) — a bare number is ambiguous between "a count" and "a task number," and that ambiguity is exactly the kind of silent-wrong-behavior risk this tool should avoid in an unattended run.
 
-`--stop-after`, `--stack`, `--extra-instructions`, and `--override-prompt` require a single target repo — they're rejected in the no-arg "run every repo" mode, since scoping to one task number/stack/prompt across multiple unrelated repos isn't a coherent request. `--limit` is the exception: given with no repo, it applies independently to each repo's own run (first N tasks in that repo, in that repo's file order) rather than being a global count across all repos combined.
+`--stop-after`, `--stack`, `--extra-instructions`, and `--override-prompt` require a single target repo — they're rejected in the no-arg "run every repo" mode, since scoping to one task number/stack/prompt across multiple unrelated repos isn't a coherent request. `--limit` and `--force` are the exceptions: given with no repo, each applies independently to each repo's own run (`--limit` = first N tasks in that repo; `--force` = take that repo's lock / kill its leftovers) rather than being a global count or a single takeover across all repos combined.
 
 ```bash
 ./overnight.sh --limit 2                     # every repo with open work, first 2 tasks each
@@ -210,6 +211,7 @@ Switching to `stream-json` only changes how the CLI reports events to us locally
 
 ## Behavior notes
 
+- **Ctrl+C stops the active repo's print-mode Claude, not just the wrapper.** `overnight.sh` traps INT/TERM and kills `claude -p --add-dir <that-repo>` process trees (via `taskkill /T` on Windows). A `logs/<repo>.overnight.lock` plus a leftover-process scan refuse a second run against the same working tree; `--force` takes over. Interactive `claude` sessions (no `-p`) are not touched. Closing the terminal window still does not run the trap — use `--force` on the next start if that happens.
 - **A five-hour usage-window block pauses and resumes automatically, mid-dispatch.** Every `claude -p --output-format stream-json` call emits a `rate_limit_event` whether it's blocked or not; `overnight.sh` reads its `rate_limit_info.status` and, only when that's `"rejected"` on the `five_hour` window (not the informational `"allowed_warning"`, and not a `seven_day`/weekly block — that's left as a normal failure instead), sleeps until the event's own `resetsAt` and retries the exact same subprocess call. No polling, no separate daemon watching the clock — the reset time comes from data the session already streams. Capped at 3 pause-retries per call so a stale or wrong `resetsAt` can't hang a run indefinitely.
 - **The run doesn't pause between tasks, but each task is its own session.** `overnight.sh` dispatches every Agent-Ready, Verify, and Research item as its own fresh `claude -p` subprocess, one after another with no human gate in between, stopping only once everything is complete, annotated `NEEDS HUMAN`, or annotated `blocked` — not after each task. Unlike a single continuous session, though, each task starts with a clean slate: it has no memory of any other task, only what its prompt hands it (the task text itself, and — for stacked tasks — that stack's `docs/stack-notes/<stack>.md`).
 - **Within a stack, later tasks don't wait for earlier ones to be reviewed.** Each task branches from the previous task's branch tip (resolved for it by `overnight.sh`'s dispatch loop, from stack-notes), so task 2 builds on task 1's code as soon as it's written, regardless of whether you've looked at task 1's PR yet. A `NEEDS HUMAN` annotation on task 1 (missing env var, API key, etc.) doesn't pause the stack — the code is presumed complete, just not fully runnable without that step.

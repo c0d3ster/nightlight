@@ -5,10 +5,10 @@
 #              no-arg multi-repo mode across PROJECT_REPOS_DIR
 #
 #   --scan is forwarded to discover only.
-#   --stop-after/--limit/--stack/--extra-instructions/--override-prompt are
-#   forwarded to overnight only, exactly as overnight.sh itself defines them
-#   (including its own single-repo requirement for all but --limit) -- see
-#   overnight.sh's own usage comment for what each does.
+#   --stop-after/--limit/--stack/--extra-instructions/--override-prompt/--force
+#   are forwarded to overnight only, exactly as overnight.sh itself defines
+#   them (including its own single-repo requirement for all but --limit and
+#   --force) -- see overnight.sh's own usage comment for what each does.
 set -e
 cd "$(dirname "$0")"
 
@@ -20,6 +20,8 @@ while [[ $# -gt 0 ]]; do
     --scan) SCAN_FLAG="--scan"; shift ;;
     --stop-after|--limit|--stack|--extra-instructions|--override-prompt)
       OVERNIGHT_FLAGS+=("$1" "$2"); shift 2 ;;
+    --force)
+      OVERNIGHT_FLAGS+=("$1"); shift ;;
     --*) echo "unknown flag: $1"; exit 1 ;;
     *) REPO="$1"; shift ;;
   esac

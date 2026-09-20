@@ -28,6 +28,11 @@
 #                          the housekeeping/workflow framing (and the task
 #                          dispatch loop itself) unless <text> restates it --
 #                          prefer the flags above.
+#   --force               take over a repo that still has an overnight lock
+#                          or leftover `claude -p` processes (kills them).
+#                          Ctrl+C already does this for the active repo; use
+#                          --force when a previous run survived the wrapper
+#                          dying (closed window, Windows signal drop).
 set -e
 cd "$(dirname "$0")"
 
@@ -44,6 +49,7 @@ LIMIT=""
 STACK=""
 EXTRA_INSTRUCTIONS=""
 OVERRIDE_PROMPT=""
+FORCE=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -52,10 +58,199 @@ while [[ $# -gt 0 ]]; do
     --stack) STACK="$2"; shift 2 ;;
     --extra-instructions) EXTRA_INSTRUCTIONS="$2"; shift 2 ;;
     --override-prompt) OVERRIDE_PROMPT="$2"; shift 2 ;;
+    --force) FORCE=1; shift ;;
     --*) echo "unknown flag: $1"; exit 1 ;;
     *) REPO="$1"; shift ;;
   esac
 done
+
+# Ctrl+C / leftover-process guards. On Windows, SIGINT often kills this
+# wrapper but not claude.exe, so a second run can mutate the same working
+# tree. We (1) lock per repo, (2) refuse to start if a print-mode claude is
+# already targeting it, (3) on INT/TERM, taskkill/kill those process trees.
+# Interactive `claude` sessions (no -p/--print) are left alone.
+ACTIVE_REPO_PATH=""
+LOCK_FILE=""
+
+is_windows() {
+  case "$(uname -s)" in
+    MINGW*|MSYS*|CYGWIN*) return 0 ;;
+  esac
+  [[ -n "${WINDIR:-}" ]]
+}
+
+# Spellings that may appear in claude's command line. Confirmed empirically
+# (spawning a native Windows exe from Git Bash with a POSIX --add-dir arg and
+# reading its Win32_Process.CommandLine back): Git Bash's argv conversion
+# rewrites a POSIX path to drive-letter + forward-slashes (cygpath -m form,
+# e.g. C:/Users/x) before a native .exe ever sees it -- backslash form
+# (cygpath -w) never showed up, so we don't generate it.
+repo_path_needles() {
+  local p="$1" m drive rest
+  printf '%s\n' "$p"
+  if command -v cygpath >/dev/null 2>&1; then
+    m="$(cygpath -m "$p" 2>/dev/null)" && printf '%s\n' "$m"
+  elif [[ "$p" =~ ^/([a-zA-Z])/(.*)$ ]]; then
+    drive="${BASH_REMATCH[1]}"
+    rest="${BASH_REMATCH[2]}"
+    printf '%s\n' "${drive^^}:/${rest}"
+  fi
+}
+
+# Print-mode only -- plan/discover use --add-dir without -p/--print.
+is_headless_repo_claude() {
+  local cmdline="$1"; shift
+  [[ "$cmdline" == *'--add-dir'* ]] || return 1
+  [[ "$cmdline" == *' -p '* || "$cmdline" == *' --print '* ]] || return 1
+  local needle
+  for needle in "$@"; do
+    [[ -n "$needle" && "$cmdline" == *"$needle"* ]] && return 0
+  done
+  return 1
+}
+
+list_repo_claude_pids() {
+  local repo_path="$1"
+  local -a needles=()
+  local n line pid cmdline ps1
+  while IFS= read -r n; do
+    [[ -n "$n" ]] && needles+=("$n")
+  done < <(repo_path_needles "$repo_path")
+
+  if is_windows; then
+    ps1="powershell.exe"
+    command -v powershell.exe >/dev/null 2>&1 || ps1="powershell"
+    command -v "$ps1" >/dev/null 2>&1 || return 0
+    while IFS= read -r line; do
+      line="${line%$'\r'}"
+      pid="${line%% *}"
+      cmdline="${line#* }"
+      [[ "$pid" =~ ^[0-9]+$ ]] || continue
+      is_headless_repo_claude "$cmdline" "${needles[@]}" && echo "$pid"
+    done < <("$ps1" -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command \
+      'Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and ($_.Name -eq "claude.exe" -or $_.Name -eq "node.exe") } | ForEach-Object { "$($_.ProcessId) $($_.CommandLine)" }' 2>/dev/null)
+  else
+    while IFS= read -r line; do
+      line="${line#"${line%%[![:space:]]*}"}"
+      pid="${line%% *}"
+      cmdline="${line#* }"
+      [[ "$pid" =~ ^[0-9]+$ ]] || continue
+      is_headless_repo_claude "$cmdline" "${needles[@]}" && echo "$pid"
+    done < <(ps -ax -o pid= -o args= 2>/dev/null || ps -eo pid= -o args=)
+  fi
+}
+
+kill_pids() {
+  local pid
+  if is_windows; then
+    for pid in "$@"; do
+      [[ "$pid" =~ ^[0-9]+$ ]] || continue
+      taskkill //T //F //PID "$pid" >/dev/null 2>&1 || true
+    done
+    return 0
+  fi
+  for pid in "$@"; do
+    [[ "$pid" =~ ^[0-9]+$ ]] || continue
+    kill -INT "$pid" 2>/dev/null || true
+  done
+  sleep 1
+  for pid in "$@"; do
+    kill -TERM "$pid" 2>/dev/null || true
+  done
+  sleep 1
+  for pid in "$@"; do
+    kill -KILL "$pid" 2>/dev/null || true
+  done
+}
+
+kill_repo_claude() {
+  local repo_path="$1"
+  local -a pids=()
+  local pid
+  while IFS= read -r pid; do
+    [[ "$pid" =~ ^[0-9]+$ ]] && pids+=("$pid")
+  done < <(list_repo_claude_pids "$repo_path")
+  [[ ${#pids[@]} -eq 0 ]] && return 0
+  echo "stopping claude -p process tree(s) for $(basename "$repo_path"): ${pids[*]}"
+  kill_pids "${pids[@]}"
+}
+
+release_lock() {
+  if [[ -n "$LOCK_FILE" && -f "$LOCK_FILE" ]]; then
+    rm -f "$LOCK_FILE"
+  fi
+  LOCK_FILE=""
+}
+
+end_repo() {
+  ACTIVE_REPO_PATH=""
+  release_lock
+}
+
+acquire_lock() {
+  local repo_path="$1" name="$2"
+  local lock="logs/$name.overnight.lock"
+  local old_pid
+  local -a leftover_pids=()
+  mkdir -p logs
+
+  if [[ -f "$lock" ]]; then
+    old_pid="$(sed -n 's/^pid=//p' "$lock" | head -n1)"
+    old_pid="${old_pid//$'\r'/}"
+    if [[ -n "$old_pid" ]] && kill -0 "$old_pid" 2>/dev/null; then
+      if [[ "$FORCE" -ne 1 ]]; then
+        echo "error: $name already has an overnight run (pid $old_pid, $lock)"
+        echo "  Ctrl+C that terminal, or re-run with --force to take over"
+        return 1
+      fi
+      echo "warn: --force: signaling overnight.sh pid $old_pid to stop"
+      kill -TERM "$old_pid" 2>/dev/null || true
+      sleep 2
+      kill -KILL "$old_pid" 2>/dev/null || true
+    else
+      echo "warn: removing stale lock $lock (pid ${old_pid:-unknown} is gone)"
+    fi
+    rm -f "$lock"
+  fi
+
+  while IFS= read -r old_pid; do
+    [[ "$old_pid" =~ ^[0-9]+$ ]] && leftover_pids+=("$old_pid")
+  done < <(list_repo_claude_pids "$repo_path")
+  if [[ ${#leftover_pids[@]} -gt 0 ]]; then
+    if [[ "$FORCE" -ne 1 ]]; then
+      echo "error: leftover claude -p process(es) still targeting $name (pids: ${leftover_pids[*]})"
+      echo "  a previous run likely survived Ctrl+C. Re-run with --force to kill them first"
+      return 1
+    fi
+    echo "warn: --force: killing leftover claude -p process(es) for $name: ${leftover_pids[*]}"
+    kill_repo_claude "$repo_path"
+  fi
+
+  {
+    echo "pid=$$"
+    echo "repo=$repo_path"
+    echo "started=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  } > "$lock"
+  LOCK_FILE="$lock"
+}
+
+on_exit() {
+  if [[ -n "$ACTIVE_REPO_PATH" ]]; then
+    kill_repo_claude "$ACTIVE_REPO_PATH"
+    ACTIVE_REPO_PATH=""
+  fi
+  release_lock
+}
+
+on_interrupt() {
+  echo ""
+  echo "interrupted: stopping this run"
+  on_exit
+  exit 130
+}
+
+trap on_interrupt INT TERM
+trap on_exit EXIT
 
 # Resolves a repo's default branch (main, master, or whatever origin/HEAD
 # points to) so run_repo works on repos that never migrated off master.
@@ -281,13 +476,19 @@ dispatch() {
   while true; do
     DISPATCH_TMP_RAW="$(mktemp)"
 
-    claude -p "$prompt" \
+    # --add-dir before -p: costs nothing, and keeps the repo path we scan for
+    # on Ctrl+C / leftover checks ahead of the (much larger, task-text-sized)
+    # prompt in the command line, in case anything downstream ever truncates
+    # it. Not observed on this system -- CommandLine came back intact at 6KB+
+    # in testing -- but cheap enough to keep as a safeguard regardless.
+    claude \
+      --add-dir "$repo_path" \
       --model sonnet \
       --permission-mode acceptEdits \
       --settings .claude/settings.json \
-      --add-dir "$repo_path" \
       --output-format stream-json \
       --verbose \
+      -p "$prompt" \
       2>>"$errlog" \
       | tee "$DISPATCH_TMP_RAW" \
       | jq -r -f format-stream.jq \
@@ -477,8 +678,11 @@ run_repo() {
   [[ -f "$tasks" ]] || { echo "skip: $name (no TASKS.md)"; return 0; }
   grep -Eq '^\s*- \[ \]' "$tasks" || { echo "skip: $name (no open tasks)"; return 0; }
 
+  acquire_lock "$repo_path" "$name" || return 1
+  ACTIVE_REPO_PATH="$repo_path"
+
   echo "=== $name ==="
-  local branch; branch="$(default_branch "$repo_path")" || return 1
+  local branch; branch="$(default_branch "$repo_path")" || { end_repo; return 1; }
   git -C "$repo_path" checkout "$branch" && git -C "$repo_path" pull
 
   mkdir -p logs
@@ -493,6 +697,7 @@ run_repo() {
     rm -f "$DISPATCH_TMP_RAW"
     record_session_totals "$name" 1 "$US_COST" "$US_DURATION_S" "$US_TURNS" "$US_CACHE_READ" "$US_CACHE_CREATION"
     [[ -s "$errlog" ]] || rm -f "$errlog"
+    end_repo
     return 0
   fi
 
@@ -505,6 +710,7 @@ run_repo() {
   if [[ ${#task_records[@]} -eq 0 ]]; then
     echo "skip: $name (no tasks found in Agent-Ready/Verify/Research)"
     rm -rf "$blockdir"
+    end_repo
     return 0
   fi
 
@@ -589,6 +795,7 @@ run_repo() {
         record_session_totals "$name" "$session_calls" "$session_cost" "$session_duration" "$session_turns" "$session_cache_read" "$session_cache_creation" "$(printf '%s\n' "${session_task_entries[@]}" | jq -s '.')"
         rm -f "$DISPATCH_TMP_RAW"
         rm -rf "$blockdir"
+        end_repo
         return 1
       fi
     fi
@@ -634,6 +841,7 @@ $task_result"
 
   if [[ "$attempted" -eq 0 ]]; then
     echo "skip: $name (every task filtered out this run, nothing to house-keep)"
+    end_repo
     return 0
   fi
 
@@ -649,6 +857,7 @@ $task_result"
   record_session_totals "$name" "$session_calls" "$session_cost" "$session_duration" "$session_turns" "$session_cache_read" "$session_cache_creation" "$tasks_json"
 
   [[ -s "$errlog" ]] || rm -f "$errlog"
+  end_repo
 }
 
 if [[ -n "$REPO" ]]; then
