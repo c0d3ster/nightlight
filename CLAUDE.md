@@ -19,6 +19,13 @@ This repo is tooling for unattended overnight sessions against target repos. Whe
 - Stacked tasks (non-`solo`) still need predecessor context without paying for a full diff/commit read. Maintain `docs/stack-notes/<stack-name>.md` in the target repo: the first task in a stack creates it, every later task in that stack appends (never rewrites) its own entry — a heading with the task's number and title, a `Branch: <branch-name>` line, key decisions, interfaces/exports created, and any deviation from acceptance criteria — committed on that task's own branch. A stacked task's prompt is built from this file's contents, not a raw diff or commit dump. `solo` tasks never create or touch a stack-notes file.
 - Each task subprocess ends its final message with one machine-parsed line: `TASK_RESULT: #<n> status=<done|blocked|needs-human> branch=<branch-name-or-none> pr=<number-or-none> note="<one-line summary>"`. The housekeeping subprocess is handed every task's `TASK_RESULT` line (collected by `overnight.sh` itself across the run) as a starting point, and confirms actual PR/branch state via `git`/`gh` before trusting it — a task session can misreport.
 
+### Turn efficiency
+
+- Batch independent read-only tool calls (`Read`/`Glob`/`Grep`) into a single turn when their inputs don't depend on each other's output. Each turn pays a full cache-read of the accumulated conversation, so fewer turns cuts cost directly.
+- Making 2+ edits to the same file? Use `MultiEdit` instead of issuing sequential `Edit` calls one per turn.
+- Chain verification commands (typecheck/lint/test) into one `Bash` invocation via `&&` where the target repo's tooling supports it, rather than issuing each as its own turn.
+- Prefer a targeted `Grep`/`Glob` over a full-file `Read` during investigation, unless the whole file's content is actually needed to answer the question.
+
 ### Branching & PRs
 
 - Every task carries `#<n>` (assigned during planning, permanent — see Task numbering) and `[stack: <name>]`. `solo` is reserved for genuinely independent tasks — never invent another name for "no dependencies."
