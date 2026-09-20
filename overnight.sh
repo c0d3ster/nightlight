@@ -143,6 +143,16 @@ list_repo_claude_pids() {
   fi
 }
 
+# Walks $1's descendants via ppid, POSIX only -- lets kill_pids reach a
+# git/test/shell child a killed claude process leaves behind.
+posix_descendant_pids() {
+  local root="$1" pid
+  echo "$root"
+  for pid in $( (ps -ax -o pid=,ppid= 2>/dev/null || ps -eo pid=,ppid=) | awk -v p="$root" '$2==p {print $1}' ); do
+    posix_descendant_pids "$pid"
+  done
+}
+
 kill_pids() {
   local pid
   if is_windows; then
@@ -152,18 +162,16 @@ kill_pids() {
     done
     return 0
   fi
+  local -a all=()
   for pid in "$@"; do
     [[ "$pid" =~ ^[0-9]+$ ]] || continue
-    kill -INT "$pid" 2>/dev/null || true
+    while IFS= read -r p; do all+=("$p"); done < <(posix_descendant_pids "$pid")
   done
+  for pid in "${all[@]}"; do kill -INT "$pid" 2>/dev/null || true; done
   sleep 1
-  for pid in "$@"; do
-    kill -TERM "$pid" 2>/dev/null || true
-  done
+  for pid in "${all[@]}"; do kill -TERM "$pid" 2>/dev/null || true; done
   sleep 1
-  for pid in "$@"; do
-    kill -KILL "$pid" 2>/dev/null || true
-  done
+  for pid in "${all[@]}"; do kill -KILL "$pid" 2>/dev/null || true; done
 }
 
 kill_repo_claude() {
@@ -223,7 +231,11 @@ pid_is_overnight() {
 # to both see no lock and both start.
 acquire_lock() {
   local repo_path="$1" name="$2"
-  local lockdir="logs/$name.overnight.lock"
+  # basename alone collides for two repos with the same name in different
+  # parents (/work/a/api vs /archive/api); key the lock off the canonical
+  # path too, keeping the basename only for readability.
+  local canon; canon="$(cd "$repo_path" 2>/dev/null && pwd -P)" || canon="$repo_path"
+  local lockdir="logs/$name-$(cksum <<< "$canon" | cut -d' ' -f1).overnight.lock"
   local lock="$lockdir/info"
   local old_pid
   local -a leftover_pids=()
