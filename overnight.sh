@@ -65,10 +65,10 @@ while [[ $# -gt 0 ]]; do
 done
 
 # Ctrl+C / leftover-process guards. On Windows, SIGINT often kills this
-# wrapper but not claude.exe, so a second run can mutate the same working
-# tree. We (1) lock per repo, (2) refuse to start if a print-mode claude is
-# already targeting it, (3) on INT/TERM, taskkill/kill those process trees.
-# Interactive `claude` sessions (no -p/--print) are left alone.
+# wrapper but not claude.exe, letting a second run mutate the same working
+# tree. Lock per repo, refuse to start if a print-mode claude already
+# targets it, and taskkill/kill on INT/TERM. Interactive claude sessions
+# (no -p/--print) are left alone.
 ACTIVE_REPO_PATH=""
 LOCK_FILE=""
 
@@ -79,12 +79,10 @@ is_windows() {
   [[ -n "${WINDIR:-}" ]]
 }
 
-# Spellings that may appear in claude's command line. Confirmed empirically
-# (spawning a native Windows exe from Git Bash with a POSIX --add-dir arg and
-# reading its Win32_Process.CommandLine back): Git Bash's argv conversion
-# rewrites a POSIX path to drive-letter + forward-slashes (cygpath -m form,
-# e.g. C:/Users/x) before a native .exe ever sees it -- backslash form
-# (cygpath -w) never showed up, so we don't generate it.
+# Spellings that may appear in claude's command line. Git Bash rewrites a
+# POSIX --add-dir arg to drive-letter + forward-slashes (cygpath -m form,
+# e.g. C:/Users/x) before a native .exe sees it -- confirmed empirically, so
+# that's the only converted form generated here.
 repo_path_needles() {
   local p="$1" m drive rest
   printf '%s\n' "$p"
@@ -104,7 +102,12 @@ is_headless_repo_claude() {
   [[ "$cmdline" == *' -p '* || "$cmdline" == *' --print '* ]] || return 1
   local needle
   for needle in "$@"; do
-    [[ -n "$needle" && "$cmdline" == *"$needle"* ]] && return 0
+    [[ -z "$needle" ]] && continue
+    # Require a boundary char after the needle (space, closing quote, or end
+    # of string) so "web" doesn't match a "web-api" repo's process too.
+    if [[ "$cmdline" == *"$needle "* || "$cmdline" == *"$needle"'"'* || "$cmdline" == *"$needle" ]]; then
+      return 0
+    fi
   done
   return 1
 }
@@ -176,8 +179,8 @@ kill_repo_claude() {
 }
 
 release_lock() {
-  if [[ -n "$LOCK_FILE" && -f "$LOCK_FILE" ]]; then
-    rm -f "$LOCK_FILE"
+  if [[ -n "$LOCK_FILE" && -d "$LOCK_FILE" ]]; then
+    rm -rf "$LOCK_FILE"
   fi
   LOCK_FILE=""
 }
@@ -187,19 +190,51 @@ end_repo() {
   release_lock
 }
 
+# True only if $1 is a live overnight.sh run -- never ourselves (kill -0 on
+# our own pid always succeeds, so a lock whose pid got reassigned to us
+# would otherwise read as "still held"), and never an unrelated process that
+# inherited a recycled pid. Falls back to trusting kill -0 alone if we can't
+# inspect the process.
+#
+# On Windows, MSYS pids aren't real Windows pids (confirmed: $$ never
+# matches a live Get-CimInstance listing), so a pid from our lock file needs
+# `ps -l`'s WINPID column to resolve to something Get-CimInstance can find.
+pid_is_overnight() {
+  local pid="$1"
+  [[ "$pid" == "$$" ]] && return 1
+  if is_windows; then
+    local winpid
+    winpid="$(ps -p "$pid" -l 2>/dev/null | awk -v p="$pid" '$1==p {print $4}')"
+    [[ "$winpid" =~ ^[0-9]+$ ]] || return 1
+    local ps1="powershell.exe"
+    command -v powershell.exe >/dev/null 2>&1 || ps1="powershell"
+    command -v "$ps1" >/dev/null 2>&1 || return 0
+    "$ps1" -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command \
+      "(Get-CimInstance Win32_Process -Filter \"ProcessId=$winpid\").CommandLine" 2>/dev/null \
+      | grep -q 'overnight\.sh'
+  else
+    ps -p "$pid" -o args= 2>/dev/null | grep -q 'overnight\.sh'
+  fi
+}
+
+# The lock is a directory, not a file: mkdir is atomic (POSIX and NTFS both
+# refuse a second create of the same name), so it's the actual mutex -- a
+# separate exists-check-then-write would leave a window for two invocations
+# to both see no lock and both start.
 acquire_lock() {
   local repo_path="$1" name="$2"
-  local lock="logs/$name.overnight.lock"
+  local lockdir="logs/$name.overnight.lock"
+  local lock="$lockdir/info"
   local old_pid
   local -a leftover_pids=()
   mkdir -p logs
 
-  if [[ -f "$lock" ]]; then
-    old_pid="$(sed -n 's/^pid=//p' "$lock" | head -n1)"
+  if ! mkdir "$lockdir" 2>/dev/null; then
+    old_pid="$(sed -n 's/^pid=//p' "$lock" 2>/dev/null | head -n1)"
     old_pid="${old_pid//$'\r'/}"
-    if [[ -n "$old_pid" ]] && kill -0 "$old_pid" 2>/dev/null; then
+    if [[ -n "$old_pid" ]] && kill -0 "$old_pid" 2>/dev/null && pid_is_overnight "$old_pid"; then
       if [[ "$FORCE" -ne 1 ]]; then
-        echo "error: $name already has an overnight run (pid $old_pid, $lock)"
+        echo "error: $name already has an overnight run (pid $old_pid, $lockdir)"
         echo "  Ctrl+C that terminal, or re-run with --force to take over"
         return 1
       fi
@@ -208,9 +243,13 @@ acquire_lock() {
       sleep 2
       kill -KILL "$old_pid" 2>/dev/null || true
     else
-      echo "warn: removing stale lock $lock (pid ${old_pid:-unknown} is gone)"
+      echo "warn: removing stale lock $lockdir (pid ${old_pid:-unknown} isn't a live overnight.sh)"
     fi
-    rm -f "$lock"
+    rm -rf "$lockdir"
+    if ! mkdir "$lockdir" 2>/dev/null; then
+      echo "error: could not acquire lock for $name (another run just took it) -- try again"
+      return 1
+    fi
   fi
 
   while IFS= read -r old_pid; do
@@ -220,6 +259,7 @@ acquire_lock() {
     if [[ "$FORCE" -ne 1 ]]; then
       echo "error: leftover claude -p process(es) still targeting $name (pids: ${leftover_pids[*]})"
       echo "  a previous run likely survived Ctrl+C. Re-run with --force to kill them first"
+      rmdir "$lockdir" 2>/dev/null
       return 1
     fi
     echo "warn: --force: killing leftover claude -p process(es) for $name: ${leftover_pids[*]}"
@@ -231,7 +271,7 @@ acquire_lock() {
     echo "repo=$repo_path"
     echo "started=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   } > "$lock"
-  LOCK_FILE="$lock"
+  LOCK_FILE="$lockdir"
 }
 
 on_exit() {
@@ -476,11 +516,9 @@ dispatch() {
   while true; do
     DISPATCH_TMP_RAW="$(mktemp)"
 
-    # --add-dir before -p: costs nothing, and keeps the repo path we scan for
-    # on Ctrl+C / leftover checks ahead of the (much larger, task-text-sized)
-    # prompt in the command line, in case anything downstream ever truncates
-    # it. Not observed on this system -- CommandLine came back intact at 6KB+
-    # in testing -- but cheap enough to keep as a safeguard regardless.
+    # --add-dir before -p: keeps the repo path ahead of the much larger
+    # prompt, in case anything ever truncates the command line (not observed
+    # in testing, but free to guard against).
     claude \
       --add-dir "$repo_path" \
       --model sonnet \
