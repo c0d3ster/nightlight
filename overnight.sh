@@ -374,6 +374,15 @@ split_tasks() {
 # earlier this run ($4, an associative array the caller maintains across the
 # loop) or, resuming a stack from an earlier run, the last "Branch: " line
 # recorded in its docs/stack-notes/<stack>.md.
+#
+# The stack-notes fallback can point at a branch whose own PR already merged
+# into main (nothing retires it -- it just sits there as a stale tip until
+# something rebases or deletes it). Chaining a new branch onto it would land
+# that new work on a dead-end branch with no PR path into main, invisible
+# from main once squash-merged. So before trusting that fallback, check
+# whether it already has a merged PR; if so, re-root on the default branch
+# instead. branch_map entries are same-run only and can't have merged yet
+# (nothing merges mid-run), so they're trusted without the check.
 resolve_base_branch() {
   local repo_path="$1" stack="$2" default_branch="$3"
   local -n branch_map="$4"
@@ -395,8 +404,14 @@ resolve_base_branch() {
       git -C "$repo_path" fetch --quiet origin "$prior_branch" 2>/dev/null || true
       if git -C "$repo_path" show-ref --verify --quiet "refs/heads/$prior_branch" \
         || git -C "$repo_path" show-ref --verify --quiet "refs/remotes/origin/$prior_branch"; then
-        echo "$prior_branch"
-        return 0
+        local merged_at
+        merged_at="$(cd "$repo_path" && gh pr view "$prior_branch" --json state,mergedAt --jq 'select(.state == "MERGED") | .mergedAt' 2>/dev/null)"
+        if [[ -n "$merged_at" ]]; then
+          echo "warn: stack '$stack''s recorded branch '$prior_branch' already merged into main (PR merged $merged_at) -- re-rooting on '$default_branch' instead of chaining onto a dead-end branch" >&2
+        else
+          echo "$prior_branch"
+          return 0
+        fi
       fi
     fi
   fi
