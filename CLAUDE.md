@@ -60,6 +60,7 @@ This repo is tooling for unattended overnight sessions against target repos. Whe
 - Open it as its own PR, `chore: session housekeeping <date>`, targeting main — the only PR touching TASKS.md, `docs/nightlight-meta.json`, or the archive, so task PRs merge in any order across any number of nights with zero conflicts.
 - Code-complete but needs a human step (env var, API key, dashboard config)? Keep it in TASKS.md as `NEEDS HUMAN: <exact steps>` (via housekeeping), same note in the task PR description — still open the PR.
 - Ambiguous or blocked for non-human reasons: annotate why (via housekeeping), skip it, move on. Never guess on judgment calls.
+- Every run, before opening the housekeeping PR, sweep every `docs/stack-notes/*.md` file for `Branch:` lines and check each one's merge state (`gh pr view <branch> --json state,mergedAt`). Delete any branch whose PR already merged, locally (`git branch -D`) and on `origin` (`git push origin --delete`) if it still exists there — this is what retires stack branches once they're done, rather than leaving them to accumulate or get mistakenly reused as a base later (see the `resolve_base_branch` guardrail in Branching & PRs, which only catches what this sweep misses). This is a git operation, not a file change — it happens outside the housekeeping commit/PR and isn't reported in its body.
 
 ### Research deliverables
 
