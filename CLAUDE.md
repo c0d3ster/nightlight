@@ -36,6 +36,7 @@ This repo is tooling for unattended overnight sessions against target repos. Whe
 - Branch: `overnight/<YYYY-MM-DD>/<NN>-<task-slug>` (NN = stack order). One task = one branch = one PR; commit in logical, revertable chunks.
 - Task branches never touch TASKS.md, `docs/nightlight-meta.json`, or `docs/tasks-archive/` — record progress in commit messages.
 - Never push to or merge main.
+- In any commit message or PR body (task PRs and the housekeeping PR alike), wrap a task number reference in backticks — `` `#48` ``, not `#48` — so GitHub's autolinker doesn't cross-link it to that repo's issue/PR #48. Applies wherever `#<n>` shows up outside TASKS.md/stack-notes/archive files (which GitHub doesn't autolink).
 
 ### Task numbering
 
