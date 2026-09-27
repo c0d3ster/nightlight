@@ -54,6 +54,11 @@ This repo is tooling for unattended overnight sessions against target repos. Whe
 - Exception: sub-checkboxes under the single task you're actively working, to track your implementation plan and progress. Check them off as you go.
 - Mid-session work not covered by an existing task goes under `## Discovered` at the bottom of TASKS.md: one-line description + where you found it. Don't implement Discovered items the same session.
 
+#### Retry-worthy failures vs. genuine blocks
+
+- Retry-worthy: an implementation was attempted and tests or acceptance criteria failed, but nothing about the failure indicates the task is ambiguous or externally blocked (e.g. a flaky test, a wrong first approach, a transient tool hiccup). Reset the branch to its starting point, discarding the failed attempt's commits, and retry once from that clean state — carry forward the diagnostic info the failed attempt surfaced (error output, which approach didn't work and why) into the retry. Only fall back to blocked if the retry also fails.
+- Genuine block: ambiguity in the task's intent, a missing prerequisite, a cross-stack dependency discovered mid-task, or a decision that requires human input. No retry — annotate blocked with the reason and move on immediately, per the existing "never guess on judgment calls" rule.
+
 ### TASKS.md maintenance
 
 - TASKS.md holds only open, blocked, or in-progress items. It has exactly one writer per run: the housekeeping subprocess.
