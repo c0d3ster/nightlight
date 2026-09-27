@@ -1,6 +1,6 @@
 # nightlight
 
-This repo is tooling for unattended overnight sessions against target repos. When a session runs, this repo is the working directory and the target repo is attached via --add-dir.
+This repo is tooling for unattended overnight sessions against target repos. When a session runs, this repo is the working directory and the target repo is attached via --add-dir — except when nightlight is dogfooding itself, where there is no separate --add-dir and nightlight is its own target repo for that run.
 
 ## Design principles
 
@@ -8,7 +8,7 @@ This repo is tooling for unattended overnight sessions against target repos. Whe
 
 ## Session topology
 
-- NEVER commit to, branch in, or modify the nightlight repo itself during a session. All code work, branches, commits, and PRs happen in the added target repo (use its path explicitly for git operations).
+- NEVER commit to, branch in, or modify the nightlight repo itself during a session — unless nightlight IS the target repo for that run (dogfooding). In that case, treat it exactly like any other target repo: this rule does not apply, and everything below (branching, PRs, TASKS.md maintenance, etc.) proceeds normally against nightlight's own working directory. Otherwise, all code work, branches, commits, and PRs happen in the separate added target repo (use its path explicitly for git operations).
 - The target repo's own CLAUDE.md defines that repo's code conventions and test/lint commands. Follow it for all code written there. Never modify the target repo's CLAUDE.md.
 
 ## Overnight Agent Workflow
