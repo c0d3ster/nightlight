@@ -57,10 +57,12 @@ This repo is tooling for unattended overnight sessions against target repos. Whe
 ### TASKS.md maintenance
 
 - TASKS.md holds only open, blocked, or in-progress items. It has exactly one writer per run: the housekeeping subprocess.
-- At the end of a run, create `overnight/<YYYY-MM-DD>/housekeeping` from main and make one commit that: checks off/removes completed tasks; adds NEEDS HUMAN and blocked annotations from the run's dispatched tasks (per their `TASK_RESULT` lines, confirmed against actual PR/branch state — see Execution model above); adds Discovered items; archives completed tasks (task number, text, PR number, notes) to a NEW `docs/tasks-archive/<YYYY-MM-DD>.md` (never append to an existing archive file); updates `tasksCompleted`/`tasksBlocked` in `docs/nightlight-meta.json` (create it with `nextTaskNumber: 1, tasksCompleted: 0, tasksBlocked: 0` if missing).
+- Checkbox glyphs are housekeeping's alone to write: `- [ ]` open/normal, `- [!]` blocked, `- [/]` NEEDS HUMAN. A task session never sets `[!]`/`[/]` itself — it reports status via its `TASK_RESULT` line and housekeeping translates that into the glyph.
+- At the end of a run, create `overnight/<YYYY-MM-DD>/housekeeping` from main and make one commit that: checks off/removes completed tasks; sets `[!]` (blocked) or `[/]` (NEEDS HUMAN) with a free-text annotation from the run's dispatched tasks (per their `TASK_RESULT` lines, confirmed against actual PR/branch state — see Execution model above); adds Discovered items; archives completed tasks (task number, text, PR number, notes) to a NEW `docs/tasks-archive/<YYYY-MM-DD>.md` (never append to an existing archive file); updates `tasksCompleted`/`tasksBlocked` in `docs/nightlight-meta.json` (create it with `nextTaskNumber: 1, tasksCompleted: 0, tasksBlocked: 0` if missing).
+- Every run, before opening the housekeeping PR, also check merge state of every `[/]`-annotated task's PR (`gh pr view <PR> --json state,mergedAt`). If merged, archive it as completed to that run's `docs/tasks-archive/<YYYY-MM-DD>.md` (task number, text, PR number, and a note that it required a human step) and remove its line from TASKS.md — no manual edit required beyond merging the PR itself. If still open, leave the `[/]` line as-is.
 - Open it as its own PR, `chore: session housekeeping <date>`, targeting main — the only PR touching TASKS.md, `docs/nightlight-meta.json`, or the archive, so task PRs merge in any order across any number of nights with zero conflicts.
-- Code-complete but needs a human step (env var, API key, dashboard config)? Keep it in TASKS.md as `NEEDS HUMAN: <exact steps>` (via housekeeping), same note in the task PR description — still open the PR.
-- Ambiguous or blocked for non-human reasons: annotate why (via housekeeping), skip it, move on. Never guess on judgment calls.
+- Code-complete but needs a human step (env var, API key, dashboard config)? Mark it `[/]` in TASKS.md with `NEEDS HUMAN: <exact steps>` (via housekeeping), same note in the task PR description — still open the PR.
+- Ambiguous or blocked for non-human reasons: mark it `[!]` and annotate why (via housekeeping), skip it, move on. Never guess on judgment calls.
 - Every run, before opening the housekeeping PR, sweep every `docs/stack-notes/*.md` file for `Branch:` lines and check each one's merge state (`gh pr view <branch> --json state,mergedAt`). Delete any branch whose PR already merged, locally (`git branch -D`) and on `origin` (`git push origin --delete`) if it still exists there — this is what retires stack branches once they're done, rather than leaving them to accumulate or get mistakenly reused as a base later (see the `resolve_base_branch` guardrail in Branching & PRs, which only catches what this sweep misses). This is a git operation, not a file change — it happens outside the housekeeping commit/PR and isn't reported in its body.
 
 ### Research deliverables
@@ -73,6 +75,7 @@ This repo is tooling for unattended overnight sessions against target repos. Whe
 
 ### Section semantics in TASKS.md
 
+- Checkbox glyphs (set only by housekeeping — see TASKS.md maintenance): `[ ]` open, ready to dispatch; `[!]` blocked, with a free-text reason; `[/]` NEEDS HUMAN, code-complete pending a manual step, auto-archived once its PR merges.
 - "Agent-Ready": implement, in order. Acceptance criteria included per task.
 - "Verify (may already be done)": confirm whether the work exists. If done, mark complete with a note (archived at session end). If not, implement.
 - "Research": write findings per the Research deliverables rules above. Do not implement or change defaults.
