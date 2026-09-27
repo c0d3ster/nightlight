@@ -6,8 +6,7 @@ This is nightlight working on itself: the target repo for these tasks is the nig
 
 ## Agent-Ready
 
-- [!] #1 [stack: solo] **Add retry-before-block rule to CLAUDE.md**
-  BLOCKED: No distinct target repo attached (--add-dir resolves to nightlight itself); task requires editing CLAUDE.md's 'Task breakdown rules', which only exists in nightlight's own CLAUDE.md — editing it would violate nightlight's own rule against modifying itself.
+- [ ] #1 [stack: solo] **Add retry-before-block rule to CLAUDE.md**
   Right now, any task failure (a flaky test, a wrong first approach, a transient tool hiccup) goes straight to "annotate blocked, skip, move on." Not every failure is a genuine blocker — some just need a second attempt with the diagnostic info from the first one. Add a distinction to the Task breakdown rules section of CLAUDE.md between retry-worthy failures (implementation attempted, tests or acceptance criteria failed, nothing indicates the task is ambiguous or externally blocked — retry once from a clean state, discarding the failed attempt's commits, before falling back to blocked) and genuine blocks (ambiguity, missing prerequisite, cross-stack dependency discovered mid-task, human-only decision — no retry, annotate and move on immediately, per existing rules). Acceptance criteria: CLAUDE.md's "Task breakdown rules" section has a new subsection distinguishing the two failure types with the retry-once behavior spelled out; existing "never guess on judgment calls" language for genuine blocks is preserved unchanged.
 
 - [ ] #10 [stack: core-loop] **Interrupted-task detection and retry via git branch scan**
