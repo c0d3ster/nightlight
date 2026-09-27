@@ -741,6 +741,15 @@ record_session_totals() {
 
 run_repo() {
   local repo_path="$1"
+  # Canonicalize before naming anything off it: a relative arg like "."
+  # or "../nightlight" must resolve to the real directory name (e.g.
+  # "nightlight"), not literally "." or "..", or every log/stats file this
+  # run produces gets misnamed. pwd -W, not plain pwd -P: this same
+  # $repo_path is later passed straight to claude's --add-dir, and only
+  # pwd -W's uppercase-drive-letter form matches the casing Claude Code's
+  # directory-trust store uses elsewhere (see discover.sh/plan.sh, which
+  # hit this same casing bug first).
+  repo_path="$(cd "$repo_path" 2>/dev/null && pwd -W)" || { echo "error: can't resolve target repo path: $1"; return 1; }
   local name; name="$(basename "$repo_path")"
   local tasks="$repo_path/TASKS.md"
 
