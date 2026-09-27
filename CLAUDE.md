@@ -33,7 +33,7 @@ This repo is tooling for unattended overnight sessions against target repos. Whe
 - `solo` is exempt from chaining: every `solo`-tagged task branches from and PRs to main independently, no matter how many share the tag — solo tasks are never chained to each other.
 - No stack tag = inherit the previous task's stack (safe default), including `solo`'s exemption if that's what the previous task was.
 - Task turns out to depend on another stack mid-implementation? Stop, annotate blocked with the reason, move on. Never silently re-stack.
-- Branch: `overnight/<YYYY-MM-DD>/<NN>-<task-slug>` (NN = stack order). One task = one branch = one PR; commit in logical, revertable chunks.
+- Branch: `overnight/<YYYY-MM-DD>/<NN>-<task-slug>` (NN = the task's own `#<n>`, not its position in a stack). One task = one branch = one PR; commit in logical, revertable chunks.
 - Task branches never touch TASKS.md, `docs/nightlight-meta.json`, or `docs/tasks-archive/` — record progress in commit messages.
 - Never push to or merge main.
 - In any commit message or PR body (task PRs and the housekeeping PR alike), wrap a task number reference in backticks — `` `#48` ``, not `#48` — so GitHub's autolinker doesn't cross-link it to that repo's issue/PR #48. Applies wherever `#<n>` shows up outside TASKS.md/stack-notes/archive files (which GitHub doesn't autolink).
