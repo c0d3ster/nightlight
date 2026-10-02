@@ -1,6 +1,6 @@
 ---
 name: discover-tasks
-description: Mines a target repo's own memory (and, with --scan, its codebase) for task candidates and proposes additions to its TASKS.md § Discovered. Run before /plan-tasks when task ideas have accumulated from direct work sessions in the target repo.
+description: Mines a target repo's own memory (and, with --scan, its docs and README) for task candidates and proposes additions to its TASKS.md § Discovered. Run before /plan-tasks when task ideas have accumulated from direct work sessions in the target repo.
 disable-model-invocation: true
 ---
 
@@ -13,7 +13,7 @@ Determine this from the attached directory's structure, never by assumption: doe
 - Yes: it's a single target repo. Phases 1–4 below apply directly, exactly as written — this is today's behavior, unchanged.
 - No, but its immediate subdirectories do: the attached directory is `PROJECT_REPOS_DIR` itself, and the repo set is those subdirectories. Run this flow instead of a single Phases 1–4 pass:
   1. Announce: "Found N repo(s) under `<dir>`."
-  2. Dispatch one `general-purpose` agent per repo — all in a single message, foreground, batched in groups of ~8 if there are more than that — each told to run Phase 1 + Phase 2 steps 1–3 for its one assigned repo (absolute path stated explicitly) and report back its candidate list (task text, rationale, source) — report only, never ask, never write. Use `general-purpose`, not `Plan`: a dispatch needs Agent-tool access itself to reach `task-scout` when `--scan` is passed, and `Plan`-type agents don't have that.
+  2. Dispatch one `general-purpose` agent per repo — all in a single message, foreground, batched in groups of ~8 if there are more than that — each told to run Phase 1 + Phase 2 steps 1–3 for its one assigned repo (absolute path stated explicitly) and report back its candidate list (task text, rationale, source) — report only, never ask, never write. Use `general-purpose`: it can read and grep, and does the `--scan` passes itself when `--scan` is passed.
   3. Once every dispatch returns, go through repos in the order they were listed. For each one: run Phase 2 step 4 (present its candidates, get my approval), then immediately Phase 3 (write) and Phase 4 (finalize) for that repo, before moving to the next.
 
 Announce each phase to me in one line before starting it.
@@ -30,7 +30,10 @@ Announce each phase to me in one line before starting it.
 
 1. Read the target repo's MEMORY.md and its indexed files. Pull only entries reading as concrete, discrete work — most `project`-type memories are context, not tasks.
 2. Cross-reference against the target repo's TASKS.md (open items) and `docs/tasks-archive/*.md` (completed). Drop anything already covered.
-3. `--scan` passed: dispatch the `task-scout` agent (foreground) for codebase-derived candidates. **Not built yet** — if missing, say so and skip this part rather than failing the run.
+3. `--scan` passed: run two read-only passes (foreground, via one `general-purpose` agent, or directly if already inside a per-repo dispatch). Report only, never write.
+   - Docs: read the target repo's `docs/`, skipping `tasks-archive/`, `stack-notes/`, and `research/`. For each plan/spec doc, check the code to judge how much is already implemented, and whether the remaining work is tracked in TASKS.md or the archive. Candidates are remaining, untracked work only.
+   - README: check its claims (commands, scripts, flags, paths, setup steps, structure) against the actual code and package scripts. Candidates are outdated or wrong statements and worthwhile improvements, each with file and line.
+   Source for each candidate is the doc path or `README`.
 4. Announce: "Found N candidate(s) from memory[, M from repo scan]." Present the full list — task text, one-line rationale, source — for my approval. Write nothing until I approve; accept/reject individually.
 
 ## Phase 3: write approved candidates
