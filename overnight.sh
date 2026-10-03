@@ -368,6 +368,19 @@ split_tasks() {
   done
 }
 
+# Picks this run's number for today: 1 + the highest r<N> already used by an
+# overnight/<today>/r<N>-* branch, local or on origin (1 if none). Keeps
+# same-date runs from colliding on branch names and sorting into each other.
+next_run_number() {
+  local repo_path="$1" date="$2" max=0 n
+  git -C "$repo_path" fetch --quiet origin 2>/dev/null || true
+  while IFS= read -r n; do
+    (( n > max )) && max=$n
+  done < <(git -C "$repo_path" branch -a --list "*overnight/$date/r*" \
+    | sed -nE "s#.*overnight/$date/r([0-9]+)-.*#\\1#p")
+  echo $((max+1))
+}
+
 # Determines which branch a task should build on. solo tasks (and a stack's
 # very first task ever) build on the repo's default branch; every later task
 # in a stack builds on that stack's previous branch -- either dispatched
@@ -422,13 +435,15 @@ resolve_base_branch() {
 # verbatim, stack/stack-notes context (or the solo/no-stack-notes rule), any
 # --extra-instructions, and the TASK_RESULT contract housekeeping consumes.
 build_task_prompt() {
-  local task_text="$1" num="$2" stack="$3" base_branch="$4" stack_notes="$5"
+  local task_text="$1" num="$2" stack="$3" base_branch="$4" stack_notes="$5" position="$6" run="$7"
 
   local p="A target repo has been added to this session via --add-dir. This is exactly ONE task from that repo's TASKS.md, dispatched by nightlight's overnight runner as its own fresh session -- you have no memory of any other task, past or future, in this run. Implement it per the \"Overnight Agent Workflow\" rules in the CLAUDE.md of THIS repo (nightlight, the one this session was launched from) -- branching, quality gates, PR, and NEEDS HUMAN/blocked handling all still apply exactly as documented there. Work this ONE task only, then stop: do not open, read for other purposes, or act on any other TASKS.md item, and do not perform end-of-session housekeeping -- a separate session handles that once, after every task dispatched this run is done.
 
 Here is the task, verbatim from TASKS.md:
 
-$task_text"
+$task_text
+
+This is run $run of today, dispatch position $position in it, so name your branch overnight/<YYYY-MM-DD>/r$run-$position-t$num-<task-slug> (position zero-padded to 2 digits, e.g. 01), per CLAUDE.md."
 
   if [[ "$stack" == "solo" ]]; then
     p="$p
@@ -469,8 +484,8 @@ Use status=done when the PR is open and every acceptance criterion is met; statu
 # dispatched task's TASK_RESULT line (collected by the caller across the
 # loop), plus which tasks were filtered out and left untouched this run.
 build_housekeeping_prompt() {
-  local run_summary="$1" skipped_summary="$2"
-  local p="A target repo has been added to this session via --add-dir. This session runs ONLY the end-of-session housekeeping step from the \"Overnight Agent Workflow\" rules in CLAUDE.md (this repo, nightlight's own) -- this run just finished dispatching one fresh session per task, so you were not present for any of them. Do not attempt any task work yourself.
+  local run_summary="$1" skipped_summary="$2" run="$3"
+  local p="A target repo has been added to this session via --add-dir. This session runs ONLY the end-of-session housekeeping step from the \"Overnight Agent Workflow\" rules in CLAUDE.md (this repo, nightlight's own) -- this run just finished dispatching one fresh session per task, so you were not present for any of them. Do not attempt any task work yourself. This is run $run of today, so name the housekeeping branch overnight/<YYYY-MM-DD>/r$run-housekeeping.
 
 Here is what each dispatched task's own session reported when it finished, verbatim (one TASK_RESULT line per task attempted this run):
 ${run_summary:-"(no tasks were attempted this run)"}"
@@ -792,6 +807,7 @@ run_repo() {
     return 0
   fi
 
+  local run_num; run_num="$(next_run_number "$repo_path" "$(date +%F)")"
   local -A stack_branch=()
   local attempted=0 consecutive_failures=0
   local run_summary="" skipped_summary=""
@@ -857,7 +873,7 @@ run_repo() {
     task_title="$(sed -n '1p' "$blockfile" | sed -E 's/^- \[ \] #[0-9]+ (\[stack: [^]]+\] )?\*\*(.*)\*\*.*$/\2/')"
 
     local task_prompt
-    task_prompt="$(build_task_prompt "$(cat "$blockfile")" "$num" "$stack" "$base_branch" "$stack_notes")"
+    task_prompt="$(build_task_prompt "$(cat "$blockfile")" "$num" "$stack" "$base_branch" "$stack_notes" "$(printf '%02d' $((attempted+1)))" "$run_num")"
 
     echo "--- dispatching task #$num [stack: $stack] ---"
     if dispatch "$task_prompt" "$repo_path" "$raw_log" "$readable_log" "$errlog"; then
@@ -923,7 +939,7 @@ $task_result"
     return 0
   fi
 
-  local housekeeping_prompt; housekeeping_prompt="$(build_housekeeping_prompt "$run_summary" "$skipped_summary")"
+  local housekeeping_prompt; housekeeping_prompt="$(build_housekeeping_prompt "$run_summary" "$skipped_summary" "$run_num")"
   echo "--- dispatching housekeeping ---"
   dispatch "$housekeeping_prompt" "$repo_path" "$raw_log" "$readable_log" "$errlog" \
     || echo "warn: claude exited non-zero for $name's housekeeping session -- check $errlog"
