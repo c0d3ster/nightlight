@@ -18,6 +18,8 @@ else
     total_duration_s: (map(.total_duration_s) | add // 0),
     total_turns: (map(.total_turns) | add // 0),
     total_cache_read_tokens: (map(.total_cache_read_tokens // 0) | add // 0),
-    total_cache_creation_tokens: (map(.total_cache_creation_tokens // 0) | add // 0)
+    total_cache_creation_tokens: (map(.total_cache_creation_tokens // 0) | add // 0),
+    total_input_tokens: (map(.total_input_tokens // 0) | add // 0),
+    total_output_tokens: (map(.total_output_tokens // 0) | add // 0)
   }' stats/*.json 2>/dev/null
 fi

@@ -99,7 +99,7 @@ Or via the `package.json` script (see Scripts below): `pnpm plan [repo]`.
 
 ## stats.sh
 
-Local, gitignored cost/time reference — never committed, never touches a target repo. After every dispatched subprocess (each task, plus housekeeping — see How it works above), its `result` event (`total_cost_usd`, `duration_ms`, `num_turns`, and cache token usage) is folded into `stats/<repo>.json` as a running total. `sessions` here counts individual `claude -p` calls, not runs of `overnight.sh`:
+Local, gitignored cost/time reference — never committed, never touches a target repo. After every dispatched subprocess (each task, plus housekeeping — see How it works above), its `result` event (`total_cost_usd`, `duration_ms`, `num_turns`, and input/output/cache token usage) is folded into `stats/<repo>.json` as a running total. `sessions` here counts individual `claude -p` calls, not runs of `overnight.sh`:
 
 ```json
 {
@@ -109,6 +109,8 @@ Local, gitignored cost/time reference — never committed, never touches a targe
   "total_turns": 2870,
   "total_cache_read_tokens": 9482113,
   "total_cache_creation_tokens": 205774,
+  "total_input_tokens": 1204,
+  "total_output_tokens": 611382,
   "lastSession": {
     "date": "2026-08-01",
     "calls": 3,
@@ -117,6 +119,8 @@ Local, gitignored cost/time reference — never committed, never touches a targe
     "num_turns": 147,
     "cache_read_tokens": 11759541,
     "cache_creation_tokens": 235138,
+    "input_tokens": 212,
+    "output_tokens": 98340,
     "tasks": [
       {"taskNumber": 18, "taskTitle": "Strip sprite background", "status": "done", "cost_usd": 1.30, "duration_s": 445, "num_turns": 28, "cache_read_tokens": 1568035, "cache_creation_tokens": 71886},
       {"taskNumber": 19, "taskTitle": "Some other task", "status": "needs-human", "cost_usd": 4.88, "duration_s": 1449, "num_turns": 104, "cache_read_tokens": 9657573, "cache_creation_tokens": 138775}
