@@ -631,7 +631,7 @@ extract_task_result() {
 # gitignored -- never committed, never touches the target repo. Called once
 # per dispatched subprocess (each task, plus housekeeping), so "sessions" here
 # means individual claude -p calls, not runs of overnight.sh. Sets
-# US_COST/US_DURATION_S/US_TURNS/US_CACHE_READ/US_CACHE_CREATION (plain,
+# US_COST/US_DURATION_S/US_TURNS/US_CACHE_READ/US_CACHE_CREATION/US_INPUT/US_OUTPUT (plain,
 # non-local -- this function's return values) to this call's own numbers,
 # zeroed if the result event was missing, for run_repo() to roll into a
 # whole-run total.
@@ -640,7 +640,7 @@ update_stats() {
   mkdir -p stats
   local stats_file="stats/$name.json"
   local result_line; result_line="$(jq -c 'select(.type == "result")' "$raw_log" | tail -n1)"
-  US_COST=0; US_DURATION_S=0; US_TURNS=0; US_CACHE_READ=0; US_CACHE_CREATION=0
+  US_COST=0; US_DURATION_S=0; US_TURNS=0; US_CACHE_READ=0; US_CACHE_CREATION=0; US_INPUT=0; US_OUTPUT=0
   if [[ -z "$result_line" ]]; then
     echo "warn: no result event in $raw_log, skipping stats update"
     return 0
@@ -656,7 +656,9 @@ update_stats() {
       total_duration_s: (($prev.total_duration_s // 0) + ($result.duration_ms / 1000 | floor)),
       total_turns: (($prev.total_turns // 0) + $result.num_turns),
       total_cache_read_tokens: (($prev.total_cache_read_tokens // 0) + ($result.usage.cache_read_input_tokens // 0)),
-      total_cache_creation_tokens: (($prev.total_cache_creation_tokens // 0) + ($result.usage.cache_creation_input_tokens // 0))
+      total_cache_creation_tokens: (($prev.total_cache_creation_tokens // 0) + ($result.usage.cache_creation_input_tokens // 0)),
+      total_input_tokens: (($prev.total_input_tokens // 0) + ($result.usage.input_tokens // 0)),
+      total_output_tokens: (($prev.total_output_tokens // 0) + ($result.usage.output_tokens // 0))
     }' > "$stats_file"
 
   US_COST="$(jq -n --argjson r "$result_line" '$r.total_cost_usd')"
@@ -664,6 +666,8 @@ update_stats() {
   US_TURNS="$(jq -n --argjson r "$result_line" '$r.num_turns')"
   US_CACHE_READ="$(jq -n --argjson r "$result_line" '$r.usage.cache_read_input_tokens // 0')"
   US_CACHE_CREATION="$(jq -n --argjson r "$result_line" '$r.usage.cache_creation_input_tokens // 0')"
+  US_INPUT="$(jq -n --argjson r "$result_line" '$r.usage.input_tokens // 0')"
+  US_OUTPUT="$(jq -n --argjson r "$result_line" '$r.usage.output_tokens // 0')"
 }
 
 # Structural self-check for stats/<repo>.json against docs/stats-schema.json
@@ -719,7 +723,7 @@ append_session_history() {
 # glance. Also appends to stats/<repo>-history.jsonl via
 # append_session_history().
 record_session_totals() {
-  local name="$1" calls="$2" cost="$3" duration_s="$4" turns="$5" cache_read="$6" cache_creation="$7" tasks_json="${8:-[]}"
+  local name="$1" calls="$2" cost="$3" duration_s="$4" turns="$5" cache_read="$6" cache_creation="$7" input="$8" output="$9" tasks_json="${10:-[]}"
   local stats_file="stats/$name.json"
 
   local session_obj
@@ -731,6 +735,8 @@ record_session_totals() {
     --argjson turns "$turns" \
     --argjson cache_read "$cache_read" \
     --argjson cache_creation "$cache_creation" \
+    --argjson input "$input" \
+    --argjson output "$output" \
     --argjson tasks "$tasks_json" \
     '{
       date: $date,
@@ -740,6 +746,8 @@ record_session_totals() {
       num_turns: $turns,
       cache_read_tokens: $cache_read,
       cache_creation_tokens: $cache_creation,
+      input_tokens: $input,
+      output_tokens: $output,
       tasks: $tasks
     }')"
 
@@ -811,7 +819,7 @@ run_repo() {
   local -A stack_branch=()
   local attempted=0 consecutive_failures=0
   local run_summary="" skipped_summary=""
-  local session_calls=0 session_cost=0 session_duration=0 session_turns=0 session_cache_read=0 session_cache_creation=0
+  local session_calls=0 session_cost=0 session_duration=0 session_turns=0 session_cache_read=0 session_cache_creation=0 session_input=0 session_output=0
 
   # Folds one update_stats() call's US_* values into this run_repo()
   # invocation's running total. Called after every dispatch (each task plus
@@ -823,6 +831,8 @@ run_repo() {
     session_turns=$((session_turns+US_TURNS))
     session_cache_read=$((session_cache_read+US_CACHE_READ))
     session_cache_creation=$((session_cache_creation+US_CACHE_CREATION))
+    session_input=$((session_input+US_INPUT))
+    session_output=$((session_output+US_OUTPUT))
   }
 
   # Appends one task's numbers (from the US_* just set by update_stats()) as
@@ -840,7 +850,9 @@ run_repo() {
       --argjson turns "$US_TURNS" \
       --argjson cache_read "$US_CACHE_READ" \
       --argjson cache_creation "$US_CACHE_CREATION" \
-      '{taskNumber: $num, taskTitle: $title, status: $status, cost_usd: $cost, duration_s: $duration_s, num_turns: $turns, cache_read_tokens: $cache_read, cache_creation_tokens: $cache_creation}')")
+      --argjson input "$US_INPUT" \
+      --argjson output "$US_OUTPUT" \
+      '{taskNumber: $num, taskTitle: $title, status: $status, cost_usd: $cost, duration_s: $duration_s, num_turns: $turns, cache_read_tokens: $cache_read, cache_creation_tokens: $cache_creation, input_tokens: $input, output_tokens: $output}')")
   }
 
   local rec num stack blockfile
@@ -886,7 +898,7 @@ run_repo() {
         update_stats "$name" "$DISPATCH_TMP_RAW"
         accumulate_session
         record_task_entry "$num" "$task_title" "dispatch-error"
-        record_session_totals "$name" "$session_calls" "$session_cost" "$session_duration" "$session_turns" "$session_cache_read" "$session_cache_creation" "$(printf '%s\n' "${session_task_entries[@]}" | jq -s '.')"
+        record_session_totals "$name" "$session_calls" "$session_cost" "$session_duration" "$session_turns" "$session_cache_read" "$session_cache_creation" "$session_input" "$session_output" "$(printf '%s\n' "${session_task_entries[@]}" | jq -s '.')"
         rm -f "$DISPATCH_TMP_RAW"
         rm -rf "$blockdir"
         end_repo
@@ -948,7 +960,7 @@ $task_result"
   rm -f "$DISPATCH_TMP_RAW"
 
   local tasks_json; tasks_json="$(printf '%s\n' "${session_task_entries[@]}" | jq -s '.')"
-  record_session_totals "$name" "$session_calls" "$session_cost" "$session_duration" "$session_turns" "$session_cache_read" "$session_cache_creation" "$tasks_json"
+  record_session_totals "$name" "$session_calls" "$session_cost" "$session_duration" "$session_turns" "$session_cache_read" "$session_cache_creation" "$session_input" "$session_output" "$tasks_json"
 
   [[ -s "$errlog" ]] || rm -f "$errlog"
   end_repo
