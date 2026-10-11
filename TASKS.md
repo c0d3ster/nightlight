@@ -17,6 +17,81 @@ This is nightlight working on itself: the target repo for these tasks is the nig
 - [ ] #4 [stack: core-loop] **Split overnight logs per task**
   Once execution is subprocess-per-task, have each subprocess write its own log file (tagged with task slug and timestamp) in addition to or instead of the single combined tee currently written to `~/overnight-logs/<repo>-<date>.log`. A combined log makes it hard to isolate "what happened on task 6" without scrolling past everything before it. Acceptance criteria: each task's `claude -p` subprocess output lands in its own file under `~/overnight-logs/<repo>-<date>/<task-slug>-<timestamp>.log` (or equivalent); a combined summary log or the terminal output still gives an overview of the whole run without needing to open every per-task file. Depends on the subprocess-per-task task above.
 
+- [ ] #13 [stack: task-sources] **Extract `lib/task-source-local.sh` from `overnight.sh`**
+  Plan: `docs/plans/multi-task-source.md` Phase 1.2. Move `split_tasks()`, the `#<n>`/`[stack]` regexes, and the open-work gate (`grep -Eq '^\s*- \[ \]'`) behind the `ts_is_eligible` / `ts_list_tasks` / `ts_task_result_re` contract in a new `lib/task-source-local.sh`, sourced by `run_repo()`. Zero behavior change.
+
+  Acceptance criteria: the local regex is still exactly `#([0-9]+)`; `run_repo()` sources the module; a local dry run produces identical task records and dispatch order to before the extraction.
+
+- [ ] #14 [stack: task-sources] **Generalize `TASK_RESULT` matching and `--stop-after` to opaque task ids**
+  Plan Phase 1.3, 1.4. Replace the hardcoded `#$num` at `overnight.sh`'s `TASK_RESULT` match sites (prompt contract, `task_result_re`, the two `sed` extractions) with `ts_task_result_re`. Add `TS_NUMERIC_IDS=1|0` to each module; `--stop-after` errors clearly when the active module sets 0 instead of silently no-op'ing.
+
+  Acceptance criteria: local mode still emits and matches `TASK_RESULT: #<n> ...`; the id is treated as an opaque string everywhere except the `--stop-after` check. Depends on `#13`.
+
+- [ ] #15 [stack: task-sources] **Read `taskSource` config and select the module in `run_repo()`**
+  Plan Phase 1.1. Read `taskSource` (`local` default, `github`, `linear`) and the `github.repo` / `linear.teamId` blocks plus the optional `labels` block from the target repo's `docs/nightlight-meta.json`; `run_repo()` sources `lib/task-source-<name>.sh` accordingly. Missing file or field means `local`. Unknown values error clearly.
+
+  Acceptance criteria: repos with no `taskSource` behave exactly as today; an unknown `taskSource` fails with a clear message. Depends on `#14`.
+
+- [ ] #16 [stack: task-sources] **Add `lib/task-source-github.sh`**
+  Plan Phase 2.2, 2.4. `ts_list_tasks` runs `gh issue list --json number,title,body,labels,author,createdAt` once per section label (`nl:agent-ready`, `nl:verify`, `nl:research`), merges, sorts by issue number, skips `nl:blocked` / `nl:needs-human`, extracts the stack from `nl:stack:*` (no label inherits the previous task's stack, `nl:stack:solo` is solo). `blockfile` is synthesized from title, body, and comments by `OWNER`/`MEMBER`/`COLLABORATOR` only. Repo defaults to `origin`, overridable by `github.repo`. `TS_NUMERIC_IDS=1`, ids are `#<n>`. `ts_is_eligible` shares the same query.
+
+  Acceptance criteria: output matches the tab-separated `id\tstack\tblockfile` shape; issues without an `nl:*` section label are never returned; non-collaborator comments are absent from the block; one API query per run feeds both gate and loop. Depends on `#15`.
+
+- [ ] #17 [stack: task-sources] **Route `plan.sh` / `discover.sh` eligibility through the task-source module**
+  Plan Phase 1 (eligibility). Replace the inline `grep -Eq '^\s*- \[ \]'` gate in `plan.sh` with `ts_is_eligible` for the repo's configured source. `discover.sh`'s no-arg mode has no gate today and stays that way; repo classification for remote sources happens inside the skill.
+
+  Acceptance criteria: `plan.sh` no-arg mode still skips local repos with no open tasks and attaches the rest exactly as before; a github-mode repo with no labeled open issues is skipped. Depends on `#16`.
+
+- [ ] #18 [stack: task-sources] **Mode detection in `/plan-tasks` and `/discover-tasks` skills**
+  Plan Phase 1.6. Add a preamble reading `taskSource` per attached repo. Remote mode, discover: Phase 3 creates issues labeled `nl:discovered` via `gh issue create`. Remote mode, plan: skip the "assign `#<n>`" step and apply section/stack labels via `gh issue edit` instead. Phase 4 / Finalize is skipped in remote mode. Local mode is unchanged.
+
+  Acceptance criteria: both skill files document both modes; local-mode text is untouched; remote mode never edits TASKS.md or opens a chore PR. Depends on `#16`.
+
+- [ ] #19 [stack: task-sources] **Remote housekeeping path (GitHub)**
+  Plan Phase 2.5. After confirming real PR/branch state: close merged tasks' issues (`--reason completed`) with a PR-link comment; add `nl:blocked` with the reason comment for blocked tasks; add `nl:needs-human` with exact steps for needs-human tasks, and close those issues once their PR merges; flag (never silently resolve) issues with contradictory labels. `tasksCompleted` / `tasksBlocked` in `docs/nightlight-meta.json` still go through the small housekeeping commit + PR. Update `build_housekeeping_prompt` accordingly, selected by `taskSource`.
+
+  Acceptance criteria: local-mode housekeeping prompt is unchanged; in github mode no TASKS.md or archive file is written; issues are closed only after their PR merged. Depends on `#16`.
+
+- [ ] #20 [stack: task-sources] **GitHub mode permissions and docs**
+  Plan Phase 1.8, 2.3. Add narrow `.claude/settings.json` allow entries (`gh issue view/list/comment/create/edit`) and denies (`gh issue delete`, `gh repo delete`). Document GitHub mode alongside local mode in CLAUDE.md (Task numbering, TASKS.md maintenance, Section semantics) without changing local-mode language, and add a README opt-in section (`taskSource`, `github.repo`, labels, the public-repo label-permission caveat from the plan's 2.4).
+
+  Acceptance criteria: no blanket `gh` or MCP allow; README states local `TASKS.md` stays the default. Depends on `#19`.
+
+- [ ] #21 [stack: task-sources] **GitHub mode dry run against a sandbox repo**
+  Plan Phase 2 verification. NEEDS HUMAN prerequisite: a throwaway GitHub repo with the `nl:*` labels and a few seeded issues, path given by the human. Run listing, dispatch one task end to end, and housekeep. Report as needs-human if no sandbox repo is available.
+
+  Acceptance criteria: `ts_list_tasks` returns issues in number order with correct stacks; a stranger-labeled or unlabeled issue is not dispatched; the issue closes only after its PR merges; `--stop-after` works. Depends on `#20`.
+
+- [ ] #22 [stack: task-sources] **Linear OAuth-persistence gate and MCP tool inventory**
+  Plan Phase 3.6, 3.3. NEEDS HUMAN prerequisite: the human has run `claude mcp add` for Linear's hosted MCP server. Verify the OAuth session survives many independent unattended `claude -p` launches without re-prompting, and record the real Linear MCP tool names and params. Deliverable: `docs/research/linear-mcp.md` (Summary, Findings, Recommendation, Open Questions, Sources). Docs only. If auth lapses, say so plainly and recommend against unattended Linear mode.
+
+  Acceptance criteria: the doc states pass/fail for persistence with the evidence, and lists the actual tool names later tasks must use. Depends on `#21`.
+
+- [ ] #23 [stack: task-sources] **Linear: `.mcp.json` and `LINEAR_API_KEY` resolver**
+  Plan Phase 3.2, 3.3. Add a checked-in `.mcp.json` registering `https://mcp.linear.app/mcp`. Add a resolver in the wrapper scripts that extracts `LINEAR_API_KEY` from the target repo's `.env` via a targeted `grep '^LINEAR_API_KEY='` first, falling back to nightlight's `.env`. Never source the target's `.env` wholesale.
+
+  Acceptance criteria: resolver works with the key in either location; the agent-side `Read(.env)` deny is untouched. Depends on `#22`.
+
+- [ ] #24 [stack: task-sources] **Add `lib/task-source-linear.sh`**
+  Plan Phase 3.3, 3.4. `ts_list_tasks` / `ts_is_eligible` via `curl` + `jq` against `https://api.linear.app/graphql`; ids are Linear identifiers (`ENG-142`); order within a stack is creation time; skip `nl:blocked` / `nl:needs-human`; `TS_NUMERIC_IDS=0`; `ts_task_result_re` matches the bare identifier.
+
+  Acceptance criteria: same tab-separated record shape as the other modules; `--stop-after` errors against a Linear-mode repo; one query feeds gate and loop. Depends on `#23`.
+
+- [ ] #25 [stack: task-sources] **Linear housekeeping and skill write paths via MCP**
+  Plan Phase 3.4. Housekeeping and the remote branches of `/plan-tasks` and `/discover-tasks` use the Linear MCP tools confirmed in `#22`: transition labels, move to Done only if the PR merged, post a PR-link comment, create `nl:discovered` issues. Reuse the remote-mode structure from `#18` and `#19`; only the write path differs.
+
+  Acceptance criteria: no `gh issue` calls in Linear mode; Finalize skipped; meta.json commit path unchanged. Depends on `#24`.
+
+- [ ] #26 [stack: task-sources] **Linear permissions and docs**
+  Plan Phase 3.5. Narrow `.claude/settings.json` allow entries per Linear MCP tool actually used (names from `#22`), explicit denies for delete-shaped tools. Add Linear-mode language to CLAUDE.md and README (setup, `.env` resolution order, `claude mcp add`).
+
+  Acceptance criteria: no server-level MCP allow; local and GitHub text unchanged. Depends on `#25`.
+
+- [ ] #27 [stack: task-sources] **Linear mode dry run against a disposable team**
+  Plan Phase 3 verification. NEEDS HUMAN prerequisite: a disposable Linear team and API key. Verify `ts_list_tasks` returns sane data and one dispatched subprocess can read its issue, transition a label, and comment via MCP. Report as needs-human if unavailable.
+
+  Acceptance criteria: end-to-end task completes with the issue updated through MCP only. Depends on `#26`.
+
 - [ ] #11 [stack: solo] **Make DB schema/migration generation NEEDS HUMAN**
   When a task's acceptance criteria require a schema change, the agent currently generates the migration, spins up the dev server, runs codegen, verifies the output, then tears the server down — a measurable, avoidable turn cost (confirmed 2026-08-06, c0d3ster: ~7 extra Bash round-trips per migration-touching task, incurred twice in one session). Change the rule: the agent edits the schema/model file(s) only, then stops — no generate step, no dev server, no codegen — and records the change as NEEDS HUMAN with the exact follow-up commands (generate migration, review generated SQL, start dev server + run codegen, review generated types, apply migration). Applies to any ORM/migration tool, not just Drizzle — this lives in the shared Overnight Agent Workflow section, used across repos with different stacks.
 
@@ -44,12 +119,3 @@ This is nightlight working on itself: the target repo for these tasks is the nig
 
 - [ ] Build the `task-scout` agent (`.claude/agents/task-scout.md`) that `discover-tasks --scan` dispatches — a project-scoped agent purpose-built for proposing well-scoped, Agent-Ready-shaped task candidates from codebase analysis (not a generic Explore/general-purpose dispatch). Source: memory `discover-tasks-scan-testing`.
   - [ ] Once built, end-to-end test `discover-tasks --scan` — verify scan-sourced candidates get proposed alongside memory-sourced ones and land correctly as unchecked items under TASKS.md `## Discovered`.
-- [ ] Verify Linear's MCP OAuth session survives many independent, unattended `claude -p` subprocess launches without re-prompting — rollout gate for everything else below, do first. Source: `docs/plans/linear-task-source.md` "Rollout gate — do not skip".
-- [ ] Extract `overnight.sh`'s TASKS.md-specific logic (`split_tasks`, the `#<n>`/`[stack]` regexes, the open-work grep gate) behind a small task-source interface as `lib/task-source-local.sh`, no behavior change — prep work before a second source exists. Source: `docs/plans/linear-task-source.md` §4.
-- [ ] Add `lib/task-source-linear.sh` implementing that same interface against Linear's API (curl+jq, `LINEAR_API_KEY` resolved from the target repo's `.env` first, nightlight's as fallback) — list open issues by label, translate to the same tab-separated task-record shape `split_tasks` produces today. Source: `docs/plans/linear-task-source.md` §2, §3, §4.
-- [ ] Add the optional `taskSource`/`linear` config block to `docs/nightlight-meta.json` (target-repo side, schema in the plan doc) and switch `overnight.sh`/`plan.sh`/`discover.sh`'s repo-eligibility checks on it instead of assuming `TASKS.md`. Source: `docs/plans/linear-task-source.md` §1, §6.
-- [ ] Register Linear's hosted MCP server in nightlight's `.mcp.json` plus the one-time OAuth setup doc, and add narrowly-scoped `.claude/settings.json` allow/deny entries for the specific Linear MCP tools task/housekeeping sessions call (confirm real tool names first — the plan doc's names are illustrative, not verified). Source: `docs/plans/linear-task-source.md` §3, §9.
-- [ ] Generalize `overnight.sh`'s `TASK_RESULT` contract and its dispatch/housekeeping prompt-building from a numeric `#<n>` to an opaque task-id string, and make `--stop-after` error clearly against a Linear-mode repo instead of silently no-op'ing. Source: `docs/plans/linear-task-source.md` §4.
-- [ ] Update CLAUDE.md's Overnight Agent Workflow (Task numbering, TASKS.md maintenance, Section semantics) to document the Linear-mode equivalents (label transitions instead of glyphs/archive file, Linear issue creation instead of a Discovered section) alongside the existing local-mode language, unchanged. Source: `docs/plans/linear-task-source.md` §5, §8, §10.
-- [ ] Update `/plan-tasks` and `/discover-tasks` skills to support Linear mode — read/write candidates as Linear issues via MCP instead of TASKS.md lines when the target repo's `taskSource` is `linear`, and skip the commit/PR/merge Finalize step entirely in that mode. Source: `docs/plans/linear-task-source.md` §7.
-- [ ] Update README.md's Configuration/Setup sections documenting the new `taskSource` option, the `.env` credential resolution order, and Linear setup steps, reiterating that local `TASKS.md` stays the default. Source: `docs/plans/linear-task-source.md` §10.
