@@ -503,7 +503,9 @@ Treat the TASK_RESULT lines above as a starting point, not ground truth -- a tas
 
 Before opening that PR, also do the branch-cleanup sweep documented in the same CLAUDE.md section: check every docs/stack-notes/*.md file's Branch: lines for merge state and delete any branch whose PR already merged, locally and on origin. This is a git operation, not a file change -- it does not belong in the housekeeping commit or PR.
 
-Also check every [/] (NEEDS HUMAN) line already in TASKS.md, not just ones reported this run -- per CLAUDE.md, check each one's PR merge state and archive+remove any that have since merged."
+Also check every [/] (NEEDS HUMAN) line already in TASKS.md, not just ones reported this run -- per CLAUDE.md, check each one's PR merge state and archive+remove any that have since merged.
+
+Likewise sweep every [x] (checked off) line in TASKS.md, not just ones reported this run -- a task checked off by hand is complete but would otherwise sit in TASKS.md forever. Confirm each one's PR state with gh, then archive+remove it and count it in tasksCompleted (a [x] whose PR has not merged goes back to [/] instead)."
 
   printf '%s' "$p"
 }
