@@ -119,3 +119,6 @@ This is nightlight working on itself: the target repo for these tasks is the nig
 
 - [ ] Build the `task-scout` agent (`.claude/agents/task-scout.md`) that `discover-tasks --scan` dispatches — a project-scoped agent purpose-built for proposing well-scoped, Agent-Ready-shaped task candidates from codebase analysis (not a generic Explore/general-purpose dispatch). Source: memory `discover-tasks-scan-testing`.
   - [ ] Once built, end-to-end test `discover-tasks --scan` — verify scan-sourced candidates get proposed alongside memory-sourced ones and land correctly as unchecked items under TASKS.md `## Discovered`.
+
+- [ ] Delete `docs/stack-notes/<stack>.md` once the stack's last PR merges: extend the housekeeping branch-cleanup sweep (which already checks each `Branch:` line's merge state) to remove the notes file when every branch in it has merged, in the housekeeping commit. Git history keeps it. Source: 2026-10-11 fractaleyez run, `user-platform.md` grew to 31KB.
+- [ ] Cap the stack notes injected into a stacked task's prompt: in `build_task_prompt`/the dispatch loop, pass only the immediate predecessor's entry (plus any earlier entry whose interfaces it needs) and tell the task the full file is on disk if it needs more. Source: 2026-10-11 fractaleyez run; ~8K tokens of mostly irrelevant history per task, growing with each task.
