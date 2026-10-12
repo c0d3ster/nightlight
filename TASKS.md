@@ -20,7 +20,7 @@ This is nightlight working on itself: the target repo for these tasks is the nig
 - [ ] #13 [stack: task-sources] **Extract `lib/task-source-local.sh` from `overnight.sh`**
   Plan: `docs/plans/multi-task-source.md` Phase 1.2. Move `split_tasks()`, the `#<n>`/`[stack]` regexes, and the open-work gate (`grep -Eq '^\s*- \[ \]'`) behind the `ts_is_eligible` / `ts_list_tasks` / `ts_task_result_re` contract in a new `lib/task-source-local.sh`, sourced by `run_repo()`. Zero behavior change.
 
-  Acceptance criteria: the local regex is still exactly `#([0-9]+)`; `run_repo()` sources the module; a local dry run produces identical task records and dispatch order to before the extraction.
+  Acceptance criteria: the local regex is still exactly `#([0-9]+)`; `run_repo()` sources the module; a local dry run produces identical task records and dispatch order to before the extraction; the module also exposes `ts_find_related` (open TASKS.md items plus `docs/tasks-archive/*.md`), the logic `/discover-tasks` runs inline today (plan 1.2, 1.6).
 
 - [ ] #14 [stack: task-sources] **Generalize `TASK_RESULT` matching and `--stop-after` to opaque task ids**
   Plan Phase 1.3, 1.4. Replace the hardcoded `#$num` at `overnight.sh`'s `TASK_RESULT` match sites (prompt contract, `task_result_re`, the two `sed` extractions) with `ts_task_result_re`. Add `TS_NUMERIC_IDS=1|0` to each module; `--stop-after` errors clearly when the active module sets 0 instead of silently no-op'ing.
@@ -35,7 +35,7 @@ This is nightlight working on itself: the target repo for these tasks is the nig
 - [ ] #16 [stack: task-sources] **Add `lib/task-source-github.sh`**
   Plan Phase 2.2, 2.4. `ts_list_tasks` runs `gh issue list --json number,title,body,labels,author,createdAt` once per section label (`nl:agent-ready`, `nl:verify`, `nl:research`), merges, sorts by issue number, skips `nl:blocked` / `nl:needs-human`, extracts the stack from `nl:stack:*` (no label inherits the previous task's stack, `nl:stack:solo` is solo). `blockfile` is synthesized from title, body, and comments by `OWNER`/`MEMBER`/`COLLABORATOR` only. Repo defaults to `origin`, overridable by `github.repo`. `TS_NUMERIC_IDS=1`, ids are `#<n>`. `ts_is_eligible` shares the same query.
 
-  Acceptance criteria: output matches the tab-separated `id\tstack\tblockfile` shape; issues without an `nl:*` section label are never returned; non-collaborator comments are absent from the block; one API query per run feeds both gate and loop. Depends on `#15`.
+  Acceptance criteria: output matches the tab-separated `id\tstack\tblockfile` shape; issues without an `nl:*` section label are never returned; non-collaborator comments are absent from the block; one API query per run feeds both gate and loop; `ts_find_related` searches open and closed issues via `gh issue list --state all --search`. Depends on `#15`.
 
 - [ ] #17 [stack: task-sources] **Route `plan.sh` / `discover.sh` eligibility through the task-source module**
   Plan Phase 1 (eligibility). Replace the inline `grep -Eq '^\s*- \[ \]'` gate in `plan.sh` with `ts_is_eligible` for the repo's configured source. `discover.sh`'s no-arg mode has no gate today and stays that way; repo classification for remote sources happens inside the skill.
@@ -45,7 +45,7 @@ This is nightlight working on itself: the target repo for these tasks is the nig
 - [ ] #18 [stack: task-sources] **Mode detection in `/plan-tasks` and `/discover-tasks` skills**
   Plan Phase 1.6. Add a preamble reading `taskSource` per attached repo. Remote mode, discover: Phase 3 creates issues labeled `nl:discovered` via `gh issue create`. Remote mode, plan: skip the "assign `#<n>`" step and apply section/stack labels via `gh issue edit` instead. Phase 4 / Finalize is skipped in remote mode. Local mode is unchanged.
 
-  Acceptance criteria: both skill files document both modes; local-mode text is untouched; remote mode never edits TASKS.md or opens a chore PR. Depends on `#16`.
+  Acceptance criteria: both skill files document both modes; local-mode text is untouched; remote mode never edits TASKS.md or opens a chore PR. Both skills, in every mode, run the plan 1.6 dedupe step: `ts_find_related` per candidate, a cheap code check for matches that look implemented, every match shown with its state, per-match choice (skip, reopen, link as follow-up, create anyway), and no silent drops (`/plan-tasks` gains dedupe it lacks today). Depends on `#16`.
 
 - [ ] #19 [stack: task-sources] **Remote housekeeping path (GitHub)**
   Plan Phase 2.5. After confirming real PR/branch state: close merged tasks' issues (`--reason completed`) with a PR-link comment; add `nl:blocked` with the reason comment for blocked tasks; add `nl:needs-human` with exact steps for needs-human tasks, and close those issues once their PR merges; flag (never silently resolve) issues with contradictory labels. `tasksCompleted` / `tasksBlocked` in `docs/nightlight-meta.json` still go through the small housekeeping commit + PR. Update `build_housekeeping_prompt` accordingly, selected by `taskSource`.
@@ -75,12 +75,12 @@ This is nightlight working on itself: the target repo for these tasks is the nig
 - [ ] #24 [stack: task-sources] **Add `lib/task-source-linear.sh`**
   Plan Phase 3.3, 3.4. `ts_list_tasks` / `ts_is_eligible` via `curl` + `jq` against `https://api.linear.app/graphql`; ids are Linear identifiers (`ENG-142`); order within a stack is creation time; skip `nl:blocked` / `nl:needs-human`; `TS_NUMERIC_IDS=0`; `ts_task_result_re` matches the bare identifier.
 
-  Acceptance criteria: same tab-separated record shape as the other modules; `--stop-after` errors against a Linear-mode repo; one query feeds gate and loop. Depends on `#23`.
+  Acceptance criteria: same tab-separated record shape as the other modules; `--stop-after` errors against a Linear-mode repo; one query feeds gate and loop; `ts_find_related` searches open and closed issues via the API. Depends on `#23`.
 
 - [ ] #25 [stack: task-sources] **Linear housekeeping and skill write paths via MCP**
   Plan Phase 3.4. Housekeeping and the remote branches of `/plan-tasks` and `/discover-tasks` use the Linear MCP tools confirmed in `#22`: transition labels, move to Done only if the PR merged, post a PR-link comment, create `nl:discovered` issues. Reuse the remote-mode structure from `#18` and `#19`; only the write path differs.
 
-  Acceptance criteria: no `gh issue` calls in Linear mode; Finalize skipped; meta.json commit path unchanged. Depends on `#24`.
+  Acceptance criteria: no `gh issue` calls in Linear mode; Finalize skipped; meta.json commit path unchanged; the plan 1.6 dedupe flow works in Linear mode, with "reopen" and "link as follow-up" done through MCP. Depends on `#24`.
 
 - [ ] #26 [stack: task-sources] **Linear permissions and docs**
   Plan Phase 3.5. Narrow `.claude/settings.json` allow entries per Linear MCP tool actually used (names from `#22`), explicit denies for delete-shaped tools. Add Linear-mode language to CLAUDE.md and README (setup, `.env` resolution order, `claude mcp add`).
