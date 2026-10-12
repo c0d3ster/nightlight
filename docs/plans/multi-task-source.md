@@ -54,6 +54,10 @@ Extract `lib/task-source-<name>.sh`, sourced by `run_repo()` based on
   needs to know the source.
 - `ts_task_result_re(id)`: the regex that matches this task's own
   `TASK_RESULT` line.
+- `ts_find_related(repo_path, query)`: open AND closed items whose title or
+  body match a candidate, with state and id. Used by the skills' dedupe step
+  (see 1.6). Local: TASKS.md plus `docs/tasks-archive/*.md`. GitHub:
+  `gh issue list --state all --search`. Linear: MCP search.
 
 `lib/task-source-local.sh` is today's `split_tasks()` and the
 `grep -Eq '^\s*- \[ \]'` gate moved as-is. Its regex stays exactly
@@ -107,7 +111,24 @@ per attached repo before choosing a write path.
   assigned an id); Synthesize applies section and stack labels instead.
 - Phase 4 (commit + PR + merge) is **skipped** in remote mode. There's no
   file diff and the write landed on approval.
-- Local mode is unchanged.
+- Local mode keeps its write path; its dedupe is upgraded as below.
+
+**Dedupe against existing work (both skills, every mode).** Today
+`/discover-tasks` silently drops candidates already covered by open TASKS.md
+items or `docs/tasks-archive/*.md`, and `/plan-tasks` doesn't dedupe at all.
+In remote mode the tracker replaces both the open list and the archive, so
+closed issues must be searched too or duplicates slip through. New behavior:
+
+1. For each candidate (discover) or Discovered item (plan), call
+   `ts_find_related` before proposing anything.
+2. If a match looks implemented, do a cheap code check (grep or a targeted
+   read) to confirm before asking.
+3. Show every match in the proposal: id, state (open, closed, or looks
+   implemented), and a one-line reason. Ask per match: skip the candidate,
+   reopen the closed item, link the candidate to it as a follow-up, or
+   create it anyway.
+4. Never drop a candidate silently. A wrongly dropped task is worse than a
+   duplicate you can decline.
 
 ### 1.7 Housekeeping split
 
