@@ -564,22 +564,23 @@ dispatch() {
   while true; do
     DISPATCH_TMP_RAW="$(mktemp)"
 
-    # --add-dir before -p: keeps the repo path ahead of the much larger
-    # prompt, in case anything ever truncates the command line (not observed
-    # in testing, but free to guard against).
-    claude \
+    # The prompt goes in on stdin, not as a -p argument: Windows caps a command
+    # line at ~32K chars, and a stacked task's prompt embeds its whole
+    # stack-notes file, which can blow past that ("Argument list too long").
+    printf '%s' "$prompt" \
+      | claude \
       --add-dir "$repo_path" \
       --model sonnet \
       --permission-mode acceptEdits \
       --settings .claude/settings.json \
       --output-format stream-json \
       --verbose \
-      -p "$prompt" \
+      -p \
       2>>"$errlog" \
       | tee "$DISPATCH_TMP_RAW" \
       | jq -r -f format-stream.jq \
       | tee -a "$readable_log"
-    claude_status="${PIPESTATUS[0]}"
+    claude_status="${PIPESTATUS[1]}"
 
     cat "$DISPATCH_TMP_RAW" >> "$raw_log"
 
