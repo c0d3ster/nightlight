@@ -132,6 +132,15 @@ closed issues must be searched too or duplicates slip through. New behavior:
 4. Never drop a candidate silently. A wrongly dropped task is worse than a
    duplicate you can decline.
 
+**Read-only agents carry the investigation work.** `.claude/agents/` holds
+`task-investigator` (per-item investigation for `/plan-tasks`: section,
+breakdown, prerequisites, touch-points) and `task-scout` (discover's scan
+passes, plus a verify mode for the dedupe code check above). Both are
+report-only. The skills keep every write path (issues, labels, `#<n>`,
+Finalize), so remote mode changes only the skills' write steps, never the
+agents. An agent's prompt is source-neutral: the item or candidate text plus
+a repo path, so an issue body works the same as a `TASKS.md` item.
+
 ### 1.7 Housekeeping split
 
 Reconciling `TASK_RESULT` against real `git`/`gh` state is already
@@ -341,7 +350,8 @@ Phases 1 and 2 as one stack, in order:
 4. Implement `lib/task-source-github.sh` (`ts_is_eligible`, `ts_list_tasks`,
    `ts_task_result_re`) with the 2.4 author filtering.
 5. Route `plan.sh` / `discover.sh` eligibility through the module.
-6. Skill mode detection and remote Phase 3 / skipped Phase 4.
+6. Skill mode detection and remote Phase 3 / skipped Phase 4; the dedupe
+   code check dispatches `task-scout` in verify mode (agent already built).
 7. Remote housekeeping path (2.5) plus the meta.json commit.
 8. `settings.json` allow/deny entries, `CLAUDE.md`, `README.md`.
 9. Dry run against a sandbox GitHub repo: list, dispatch one task, housekeep.
