@@ -14,7 +14,7 @@ Determine this from the attached directory's structure, never by assumption: doe
 - No, but its immediate subdirectories do: the attached directory is `PROJECT_REPOS_DIR` itself, and the repo set is those subdirectories. Run this flow instead of a single Phases 1–4 pass:
   1. Announce: "Found N repo(s) under `<dir>`."
   2. Dispatch one `general-purpose` agent per repo for Phase 1 + Phase 2 steps 1–2 (memory only), and, when `--scan` is passed, one `task-scout` agent per repo for the scan (subagents generally cannot spawn subagents, so dispatch `task-scout` directly from here). All in a single message, foreground, batched in groups of ~8 if there are more than that, each told its one repo's absolute path. Each reports candidates only (task text, rationale, source) — report only, never ask, never write.
-3. Once every dispatch returns, go through repos in the order they were listed. For each one: run Phase 2 step 4 (present its candidates, get my approval), then immediately Phase 3 (write) and Phase 4 (finalize) for that repo, before moving to the next.
+  3. Once every dispatch returns, go through repos in the order they were listed. For each one: run Phase 2 step 4 (present its candidates, get my approval), then immediately Phase 3 (write) and Phase 4 (finalize) for that repo, before moving to the next.
 
 Announce each phase to me in one line before starting it.
 
