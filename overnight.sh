@@ -971,8 +971,14 @@ $task_result"
   end_repo
 }
 
+# bash reads this file as it runs, and dogfooding runs swap overnight.sh under
+# us when task branches check out. Exit on the same line as the final block
+# closes, so bash never reads past it into whatever the file became.
 if [[ -n "$REPO" ]]; then
   TARGET="$REPO"
+  # the repo's own folder name (e.g. "nightlight") means this checkout, wherever
+  # it lives; the script cd'd to its own dir above, so "." is this repo.
+  [[ "$TARGET" != "$(basename "$PWD")" ]] || TARGET="."
   [[ -d "$TARGET" ]] || TARGET="$PROJECT_REPOS_DIR/$REPO"
   run_repo "$TARGET"
 else
@@ -980,4 +986,4 @@ else
   for d in "$PROJECT_REPOS_DIR"/*/; do
     run_repo "${d%/}"
   done
-fi
+fi; exit $?

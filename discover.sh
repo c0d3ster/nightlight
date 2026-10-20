@@ -24,6 +24,9 @@ for arg in "$@"; do
 done
 
 if [[ -n "$REPO" ]]; then
+  # the repo's own folder name (e.g. "nightlight") means this checkout, wherever
+  # it lives; the script cd'd to its own dir above, so "." is this repo.
+  [[ "$REPO" != "$(basename "$PWD")" ]] || REPO="."
   [[ -d "$REPO" ]] || REPO="$PROJECT_REPOS_DIR/$REPO"
   # resolve to an absolute path so "." and "./" (e.g. self-targeting nightlight
   # from inside its own directory) end up byte-identical before reaching --add-dir.
