@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # usage: pnpm plan [repo] — opens an interactive planning session
 #   with repo: plans that one repo
-#   without:   plans every repo under PROJECT_REPOS_DIR that has open,
-#              unchecked TASKS.md work (same gate overnight.sh's run_repo uses)
+#   without:   plans every repo under PROJECT_REPOS_DIR with open work in its
+#              configured task source (same gate overnight.sh's run_repo uses)
 set -e
 
 cd "$(dirname "$0")"
@@ -10,6 +10,8 @@ git pull --quiet || echo "warn: could not pull latest nightlight rules, running 
 
 set -a; source .env; set +a
 : "${PROJECT_REPOS_DIR:?PROJECT_REPOS_DIR not set in .env}"
+command -v jq >/dev/null || { echo "jq is required (see README Requirements)"; exit 1; }
+source lib/task-source.sh
 
 REPO="$1"
 
@@ -35,9 +37,9 @@ else
   for d in "$PROJECT_REPOS_DIR"/*/; do
     d="${d%/}"
     name="$(basename "$d")"
-    tasks="$d/TASKS.md"
-    [[ -f "$tasks" ]] || { echo "skip: $name (no TASKS.md)"; continue; }
-    grep -Eq '^\s*- \[ \]' "$tasks" || { echo "skip: $name (no open tasks)"; continue; }
+    load_task_source "$d" || { echo "skip: $name (task source unavailable)"; continue; }
+    [[ "$TASK_SOURCE" != local || -f "$d/TASKS.md" ]] || { echo "skip: $name (no TASKS.md)"; continue; }
+    ts_is_eligible "$d" || { echo "skip: $name (no open tasks)"; continue; }
     ADD_DIRS+=(--add-dir "$(cd "$d" && pwd -W)")
   done
   [[ ${#ADD_DIRS[@]} -gt 0 ]] || { echo "no repos under PROJECT_REPOS_DIR have open tasks"; exit 0; }
