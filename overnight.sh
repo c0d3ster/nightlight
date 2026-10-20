@@ -489,7 +489,7 @@ IMPORTANT - special instructions for this run: $EXTRA_INSTRUCTIONS"
   p="$p
 
 When you are done -- whether the task completed, needs a human step, or is blocked -- end your FINAL message with exactly one line, on its own, after everything else, nothing after it:
-TASK_RESULT: #$num status=<done|blocked|needs-human> branch=<branch-name-or-none> pr=<number-or-none> note=\"<one-line summary>\"
+TASK_RESULT: $(ts_task_result_label "$num") status=<done|blocked|needs-human> branch=<branch-name-or-none> pr=<number-or-none> note=\"<one-line summary>\"
 Use status=done when the PR is open and every acceptance criterion is met; status=needs-human when the PR is open but a manual step remains (put the exact steps in the PR description and TASKS.md per CLAUDE.md, keep note to a short pointer); status=blocked when you stopped before opening a PR (note explains why, per CLAUDE.md's blocked rules). This line is machine-parsed by this run's housekeeping session afterward -- match the format exactly, no markdown, no extra lines around it."
 
   printf '%s' "$p"
@@ -796,6 +796,9 @@ run_repo() {
   local name; name="$(basename "$repo_path")"
   local tasks="$repo_path/TASKS.md"
   source lib/task-source-local.sh
+  if [[ -n "$STOP_AFTER" && "$TS_NUMERIC_IDS" != 1 ]]; then
+    echo "error: --stop-after needs numeric task ids, and this task source uses opaque ids"; return 1
+  fi
 
   [[ -f "$tasks" ]] || { echo "skip: $name (no TASKS.md)"; return 0; }
   ts_is_eligible "$repo_path" || { echo "skip: $name (no open tasks)"; return 0; }
@@ -971,13 +974,13 @@ run_repo() {
       else
         echo "warn: task #$num did not emit a TASK_RESULT line"
       fi
-      task_result="TASK_RESULT: #$num status=unknown branch=unknown pr=unknown note=\"subprocess ended without emitting a valid TASK_RESULT line -- check its branch/PR state manually\""
+      task_result="TASK_RESULT: $(ts_task_result_label "$num") status=unknown branch=unknown pr=unknown note=\"subprocess ended without emitting a valid TASK_RESULT line -- check its branch/PR state manually\""
     fi
     run_summary="$run_summary
 $task_result"
 
     local reported_branch
-    reported_branch="$(sed -n "s/^TASK_RESULT: #$num status=[^ ]* branch=\\([^ ]*\\).*/\\1/p" <<< "$task_result")"
+    reported_branch="$(sed -n "s/^TASK_RESULT: [^ ]* status=[^ ]* branch=\\([^ ]*\\).*/\\1/p" <<< "$task_result")"
     if [[ -n "$reported_branch" && "$reported_branch" != "none" && "$reported_branch" != "unknown" ]]; then
       if git -C "$repo_path" show-ref --verify --quiet "refs/heads/$reported_branch"; then
         stack_branch["$stack"]="$reported_branch"
@@ -987,7 +990,7 @@ $task_result"
     fi
 
     local reported_status
-    reported_status="$(sed -n "s/^TASK_RESULT: #$num status=\\([^ ]*\\).*/\\1/p" <<< "$task_result")"
+    reported_status="$(sed -n "s/^TASK_RESULT: [^ ]* status=\\([^ ]*\\).*/\\1/p" <<< "$task_result")"
     record_task_entry "$num" "$task_title" "${reported_status:-unknown}"
 
     attempted=$((attempted+1))

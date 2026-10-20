@@ -63,10 +63,15 @@ ts_list_tasks() {
   done
 }
 
+# How this source writes a task id in the TASK_RESULT line the prompt asks for.
+ts_task_result_label() {
+  printf '%s' "#$1"
+}
+
 # Regex (ERE) matching this task's own TASK_RESULT line, anchored at line start.
 ts_task_result_re() {
   local id="$1"
-  printf '%s' "^TASK_RESULT: #$id "
+  printf '%s' "^TASK_RESULT: $(ts_task_result_label "$id") "
 }
 
 # Open TASKS.md items plus archived tasks whose text matches $2 (case
