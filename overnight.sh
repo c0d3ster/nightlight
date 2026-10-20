@@ -501,7 +501,7 @@ Here is the task, verbatim from TASKS.md:
 
 $task_text
 
-This is run $run of today, dispatch position $position in it, so name your branch overnight/<YYYY-MM-DD>/r$run-$position-t$num-<task-slug> (position zero-padded to 2 digits, e.g. 01), per CLAUDE.md."
+This is run $run of today, dispatch position $position in it, so name your branch overnight/<YYYY-MM-DD>/r$run-$position-t$num-<task-slug>, per CLAUDE.md."
 
   if [[ "$stack" == "solo" ]]; then
     p="$p
@@ -976,12 +976,12 @@ run_repo() {
     task_title="$(sed -n '1p' "$blockfile" | sed -E 's/^- \[ \] #[0-9]+ (\[stack: [^]]+\] )?\*\*(.*)\*\*.*$/\2/')"
 
     local task_prompt
-    task_prompt="$(build_task_prompt "$(cat "$blockfile")" "$num" "$stack" "$base_branch" "$stack_notes" "$(printf '%02d' $((attempted+1)))" "$run_num" "$retried")"
+    task_prompt="$(build_task_prompt "$(cat "$blockfile")" "$num" "$stack" "$base_branch" "$stack_notes" "$((attempted+1))" "$run_num" "$retried")"
 
     # Same r<R>-<PP>-t<NN> as the branch name told to the subprocess, plus a
     # slug derived from the task title.
     local task_slug; task_slug="$(printf '%s' "$task_title" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+|-+$//g' | cut -c1-40 | sed -E 's/-+$//')"
-    local base; base="$logdir/r$run_num-$(printf '%02d' $((attempted+1)))-t$num-${task_slug:-task}"
+    local base; base="$logdir/r$run_num-$((attempted+1))-t$num-${task_slug:-task}"
     local errlog="$base.stderr.log"
 
     echo "--- dispatching task #$num [stack: $stack] ---"
