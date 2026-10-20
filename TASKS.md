@@ -140,4 +140,3 @@ This is nightlight working on itself: the target repo for these tasks is the nig
 
 ## Discovered
 
-- Housekeeping never re-checks `[!]` tasks whose block reason is a dependency on a PR that has since merged (e.g. `#10` stayed `[!]` after `#40` merged); nothing dispatches `[!]` items either. Add a sweep that parses the annotation's PR/task references, checks merge state, and clears the glyph. Found while auditing TASKS.md, 2026-10-19.
