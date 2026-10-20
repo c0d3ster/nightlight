@@ -393,13 +393,13 @@ next_run_number() {
 # work. Prints one orphaned branch name per line.
 find_orphan_branches() {
   local repo_path="$1" num="$2"
-  local re="^overnight/[0-9]{4}-[0-9]{2}-[0-9]{2}/r[0-9]+-[0-9]+-t0*$num-"
+  local re="^overnight/[0-9]{4}-[0-9]{2}-[0-9]{2}/r[0-9]+-[0-9]+-t$num-"
   local b pr_count
   while IFS= read -r b; do
     [[ "$b" =~ $re ]] || continue
     pr_count="$(cd "$repo_path" && gh pr list --head "$b" --state all --json number --jq length 2>/dev/null)" || continue
     [[ "$pr_count" == "0" ]] && echo "$b"
-  done < <(git -C "$repo_path" for-each-ref --format='%(refname:short)' refs/heads/overnight)
+  done < <(git -C "$repo_path" for-each-ref --format='%(refname:short)' refs/heads/overnight refs/remotes/origin/overnight | sed 's#^origin/##' | sort -u)
 }
 
 # Discards each orphaned branch (locally, and on origin if it was pushed) so
@@ -410,7 +410,9 @@ discard_orphan_branches() {
   shift 2
   git -C "$repo_path" checkout --quiet "$default_branch" || return 1
   for b in "$@"; do
-    git -C "$repo_path" branch -D "$b" >/dev/null || continue
+    if git -C "$repo_path" rev-parse --verify --quiet "refs/heads/$b" >/dev/null; then
+      git -C "$repo_path" branch -D "$b" >/dev/null || continue
+    fi
     if git -C "$repo_path" ls-remote --exit-code --heads origin "$b" >/dev/null 2>&1; then
       git -C "$repo_path" push --quiet origin --delete "$b" 2>/dev/null || true
     fi
@@ -957,6 +959,14 @@ run_repo() {
     fi
 
     local base_branch; base_branch="$(resolve_base_branch "$repo_path" "$stack" "$branch" stack_branch)"
+    # The previous task leaves the repo on its own branch; the prompt says the
+    # base is "currently checked out", so make that true.
+    if ! git -C "$repo_path" checkout --quiet "$base_branch"; then
+      echo "warn: can't check out base branch '$base_branch' for task #$num -- skipping it"
+      skipped_summary="$skipped_summary
+- #$num: not attempted, couldn't check out its base branch '$base_branch'"
+      continue
+    fi
     local stack_notes=""
     if [[ "$stack" != "solo" && -f "$repo_path/docs/stack-notes/$stack.md" ]]; then
       stack_notes="$(extract_latest_stack_note "$repo_path/docs/stack-notes/$stack.md")"
@@ -971,7 +981,7 @@ run_repo() {
     # Same r<R>-<PP>-t<NN> as the branch name told to the subprocess, plus a
     # slug derived from the task title.
     local task_slug; task_slug="$(printf '%s' "$task_title" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+|-+$//g' | cut -c1-40 | sed -E 's/-+$//')"
-    local base; base="$logdir/r$run_num-$(printf '%02d' $((attempted+1)))-t$(printf '%02d' "$num")-${task_slug:-task}"
+    local base; base="$logdir/r$run_num-$(printf '%02d' $((attempted+1)))-t$num-${task_slug:-task}"
     local errlog="$base.stderr.log"
 
     echo "--- dispatching task #$num [stack: $stack] ---"
