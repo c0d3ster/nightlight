@@ -473,6 +473,14 @@ Before finishing, append your own entry to docs/stack-notes/$stack.md (never rew
 This task starts stack \"$stack\". Branch from the repo's default branch (currently checked out, at \"$base_branch\"). Before finishing, create docs/stack-notes/$stack.md with your own entry: a heading with this task's number and title, a \"Branch: <your-branch-name>\" line, key decisions, interfaces/exports created, and any deviation from acceptance criteria -- later tasks in this stack will read this file instead of your diff or commit history. Commit it as part of this task's own work, on this task's own branch."
   fi
 
+  if [[ "$TASK_SOURCE" == "github" ]]; then
+    local repo_flag=""
+    [[ -n "$TS_GITHUB_REPO" ]] && repo_flag=" --repo $TS_GITHUB_REPO"
+    p="$p
+
+This task is GitHub issue \`#$num\`; the text above is a synthesized snapshot. Read full detail and comments with \`gh issue view $num --comments$repo_flag\`. Reference the issue as \`#$num\` in backticks in the PR body, never use \`Closes #$num\` or any other closing keyword (closing is housekeeping's job), and never set status labels (nl:blocked, nl:needs-human) yourself; report status via TASK_RESULT only."
+  fi
+
   if [[ -n "$retried" ]]; then
     p="$p
 
@@ -787,6 +795,7 @@ record_session_totals() {
 # file or field means local. Sets TASK_SOURCE, TS_GITHUB_REPO, TS_LINEAR_TEAM_ID
 # and TS_LABELS_JSON (the raw optional labels object, "{}" if absent) for the
 # modules to read. Only the chosen source's block is read.
+# github.repo is optional (the github module falls back to origin).
 load_task_source() {
   local repo_path="$1" meta="$1/docs/nightlight-meta.json"
   TASK_SOURCE=local TS_GITHUB_REPO="" TS_LINEAR_TEAM_ID="" TS_LABELS_JSON="{}"
@@ -799,7 +808,6 @@ load_task_source() {
     local) ;;
     github)
       TS_GITHUB_REPO="$(jq -r '.github.repo // empty' "$meta")"
-      [[ -n "$TS_GITHUB_REPO" ]] || { echo "error: taskSource is \"github\" but github.repo is missing in $meta"; return 1; }
       ;;
     linear)
       TS_LINEAR_TEAM_ID="$(jq -r '.linear.teamId // empty' "$meta")"
