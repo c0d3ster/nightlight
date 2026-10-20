@@ -121,8 +121,10 @@ closed issues must be searched too or duplicates slip through. New behavior:
 
 1. For each candidate (discover) or Discovered item (plan), call
    `ts_find_related` before proposing anything.
-2. If a match looks implemented, do a cheap code check (grep or a targeted
-   read) to confirm before asking.
+2. If a match looks implemented, confirm with a cheap code check before
+   asking: dispatch `task-scout` in verify mode (candidate plus related items
+   in the prompt; it reports implemented, partial, or not implemented with
+   `path:line` evidence).
 3. Show every match in the proposal: id, state (open, closed, or looks
    implemented), and a one-line reason. Ask per match: skip the candidate,
    reopen the closed item, link the candidate to it as a follow-up, or
@@ -371,6 +373,7 @@ GitHub steps 4 to 9:
 - `plan.sh`, `discover.sh`: eligibility via the module
 - `lib/task-source-linear.sh`, `.mcp.json` (new, Phase 3)
 - `.claude/skills/plan-tasks/SKILL.md`, `.claude/skills/discover-tasks/SKILL.md`
+- `.claude/agents/task-scout.md` (verify mode), `.claude/agents/task-investigator.md`
 - `.claude/settings.json`: `gh issue` and Linear MCP allow/deny entries
 - `docs/nightlight-meta.json`: schema addition (per target repo)
 - `CLAUDE.md`, `README.md`
