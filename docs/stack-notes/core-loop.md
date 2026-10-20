@@ -27,3 +27,17 @@ Key decisions:
 Interfaces created: `find_orphan_branches <repo> <num>` and `discard_orphan_branches <repo> <default-branch> <branches...>` in `overnight.sh`; CLAUDE.md Execution model bullet documenting the scan.
 
 Deviation: orphan check treats any PR (not just open) as "not interrupted".
+
+## `#4` Split overnight logs per task
+
+Branch: overnight/2026-10-20/r1-02-t4-split-logs-per-task
+
+Key decisions:
+- Logs now live in `logs/<repo>/<date>/`: `r<R>-<PP>-t<NN>-<slug>.{log,stderr.log,jsonl}` per task, `r<R>-housekeeping.*`, `r<R>-override.*`, and `r<R>-run.log` as the combined readable overview. `run_num` is now computed once up front in `run_repo()` (also used by override mode) and the position/`NN` use the same `%02d` formatting as the branch name told to the subprocess.
+- `dispatch()` takes an optional 6th arg `run_log` and tees readable output to it as well as the per-task log, so terminal output is unchanged.
+- Empty per-task `.stderr.log` files are removed after each dispatch.
+- The slug is not computed anywhere else in `overnight.sh` (the subprocess invents its own branch slug), so log slugs are derived from the task title (lowercase, non-alnum to `-`, 40 chars max). They can differ from the branch slug; `r<R>-<PP>-t<NN>` always matches.
+
+Interfaces created: none new; `dispatch()` gained an optional `run_log` arg. README logs section updated; `logs/` was already gitignored.
+
+Deviation: the log slug is title-derived rather than reused from branch naming, since the script never computes a branch slug.
