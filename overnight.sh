@@ -381,6 +381,42 @@ next_run_number() {
   echo $((max+1))
 }
 
+# Finds interrupted attempts at task $2: local branches named
+# overnight/<date>/r<R>-<PP>-t<NN>-<slug> (NN = the task's own #<n>) that no
+# PR was ever opened for. A session that finished opens its PR before exiting,
+# so a branch with no PR means the session died mid-task (window closed,
+# machine slept) before housekeeping could say anything about it. A branch
+# with any PR (open, or merged/closed since) is left alone: that's "done,
+# housekeeping hasn't run yet" or a human decision, not an interruption. If gh
+# can't answer, the branch is skipped rather than risk discarding finished
+# work. Prints one orphaned branch name per line.
+find_orphan_branches() {
+  local repo_path="$1" num="$2"
+  local re="^overnight/[0-9]{4}-[0-9]{2}-[0-9]{2}/r[0-9]+-[0-9]+-t0*$num-"
+  local b pr_count
+  while IFS= read -r b; do
+    [[ "$b" =~ $re ]] || continue
+    pr_count="$(cd "$repo_path" && gh pr list --head "$b" --state all --json number --jq length 2>/dev/null)" || continue
+    [[ "$pr_count" == "0" ]] && echo "$b"
+  done < <(git -C "$repo_path" for-each-ref --format='%(refname:short)' refs/heads/overnight)
+}
+
+# Discards each orphaned branch (locally, and on origin if it was pushed) so
+# the task retries from a clean state. Prints the discarded names, one per
+# line, for the caller to hand to the retry prompt.
+discard_orphan_branches() {
+  local repo_path="$1" default_branch="$2" b
+  shift 2
+  git -C "$repo_path" checkout --quiet "$default_branch" || return 1
+  for b in "$@"; do
+    git -C "$repo_path" branch -D "$b" >/dev/null || continue
+    if git -C "$repo_path" ls-remote --exit-code --heads origin "$b" >/dev/null 2>&1; then
+      git -C "$repo_path" push --quiet origin --delete "$b" 2>/dev/null || true
+    fi
+    echo "$b"
+  done
+}
+
 # Determines which branch a task should build on. solo tasks (and a stack's
 # very first task ever) build on the repo's default branch; every later task
 # in a stack builds on that stack's previous branch -- either dispatched
@@ -435,7 +471,7 @@ resolve_base_branch() {
 # verbatim, stack/stack-notes context (or the solo/no-stack-notes rule), any
 # --extra-instructions, and the TASK_RESULT contract housekeeping consumes.
 build_task_prompt() {
-  local task_text="$1" num="$2" stack="$3" base_branch="$4" stack_notes="$5" position="$6" run="$7"
+  local task_text="$1" num="$2" stack="$3" base_branch="$4" stack_notes="$5" position="$6" run="$7" retried="${8:-}"
 
   local p="A target repo has been added to this session via --add-dir. This is exactly ONE task from that repo's TASKS.md, dispatched by nightlight's overnight runner as its own fresh session -- you have no memory of any other task, past or future, in this run. Implement it per the \"Overnight Agent Workflow\" rules in the CLAUDE.md of THIS repo (nightlight, the one this session was launched from) -- branching, quality gates, PR, and NEEDS HUMAN/blocked handling all still apply exactly as documented there. Work this ONE task only, then stop: do not open, read for other purposes, or act on any other TASKS.md item, and do not perform end-of-session housekeeping -- a separate session handles that once, after every task dispatched this run is done.
 
@@ -463,6 +499,13 @@ Before finishing, append your own entry to docs/stack-notes/$stack.md (never rew
     p="$p
 
 This task starts stack \"$stack\". Branch from the repo's default branch (currently checked out, at \"$base_branch\"). Before finishing, create docs/stack-notes/$stack.md with your own entry: a heading with this task's number and title, a \"Branch: <your-branch-name>\" line, key decisions, interfaces/exports created, and any deviation from acceptance criteria -- later tasks in this stack will read this file instead of your diff or commit history. Commit it as part of this task's own work, on this task's own branch."
+  fi
+
+  if [[ -n "$retried" ]]; then
+    p="$p
+
+RETRY: an earlier session's attempt at this task was interrupted before it opened a PR (the branch scan found no PR for: $(printf '%s' "$retried" | tr '
+' ' ')). Those branches have been discarded, so start from a clean state and treat this as the one retry allowed for this task."
   fi
 
   if [[ -n "$EXTRA_INSTRUCTIONS" ]]; then
@@ -880,6 +923,15 @@ run_repo() {
       continue
     fi
 
+    local -a orphans=()
+    mapfile -t orphans < <(find_orphan_branches "$repo_path" "$num")
+    local retried=""
+    if [[ ${#orphans[@]} -gt 0 ]]; then
+      retried="$(discard_orphan_branches "$repo_path" "$branch" "${orphans[@]}")"
+      [[ -n "$retried" ]] && echo "retry: task #$num had interrupted attempt(s), discarded: $(printf '%s' "$retried" | tr '
+' ' ')"
+    fi
+
     local base_branch; base_branch="$(resolve_base_branch "$repo_path" "$stack" "$branch" stack_branch)"
     local stack_notes=""
     if [[ "$stack" != "solo" && -f "$repo_path/docs/stack-notes/$stack.md" ]]; then
@@ -890,7 +942,7 @@ run_repo() {
     task_title="$(sed -n '1p' "$blockfile" | sed -E 's/^- \[ \] #[0-9]+ (\[stack: [^]]+\] )?\*\*(.*)\*\*.*$/\2/')"
 
     local task_prompt
-    task_prompt="$(build_task_prompt "$(cat "$blockfile")" "$num" "$stack" "$base_branch" "$stack_notes" "$(printf '%02d' $((attempted+1)))" "$run_num")"
+    task_prompt="$(build_task_prompt "$(cat "$blockfile")" "$num" "$stack" "$base_branch" "$stack_notes" "$(printf '%02d' $((attempted+1)))" "$run_num" "$retried")"
 
     echo "--- dispatching task #$num [stack: $stack] ---"
     if dispatch "$task_prompt" "$repo_path" "$raw_log" "$readable_log" "$errlog"; then
