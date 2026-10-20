@@ -8,7 +8,8 @@
 # the whole run -- see CLAUDE.md's "Overnight Agent Workflow > Execution
 # model" for why (context, and cache-read cost, no longer compound across
 # every task in a run). Stacked tasks get their predecessor's context from
-# docs/stack-notes/<stack>.md in the target repo, not a raw diff/commit dump.
+# the latest entry of docs/stack-notes/<stack>.md in the target repo (earlier
+# entries are listed by heading only), not a raw diff/commit dump.
 #
 # flags (compose with the per-task prompt, they don't replace it):
 #   --stop-after N        only complete tasks through #N (each task's permanent
@@ -467,6 +468,25 @@ resolve_base_branch() {
   echo "$default_branch"
 }
 
+# Prints the part of a stack-notes file a stacked task's prompt embeds: the
+# last "## " block (the immediate predecessor's entry), then a list of the
+# earlier "## " headings. A file with no "## " heading is printed whole.
+extract_latest_stack_note() {
+  awk '
+    /^## / { n++; heads[n] = $0; start = NR }
+    { lines[NR] = $0 }
+    END {
+      if (!n) { for (i = 1; i <= NR; i++) print lines[i]; exit }
+      for (i = start; i <= NR; i++) print lines[i]
+      if (n > 1) {
+        print ""
+        print "Earlier entries (headings only):"
+        for (i = 1; i < n; i++) print "- " substr(heads[i], 4)
+      }
+    }
+  ' "$1"
+}
+
 # Builds the prompt for a single task's fresh subprocess: the task text
 # verbatim, stack/stack-notes context (or the solo/no-stack-notes rule), any
 # --extra-instructions, and the TASK_RESULT contract housekeeping consumes.
@@ -488,13 +508,13 @@ This task is [stack: solo]: branch from the repo's default branch (currently che
   elif [[ -n "$stack_notes" ]]; then
     p="$p
 
-This task continues stack \"$stack\". Branch your work from \"$base_branch\" (the latest branch already in this stack) instead of the repo's default branch. Below is docs/stack-notes/$stack.md, written by earlier tasks in this same stack -- use it as your context instead of inspecting their full diffs or commit history:
+This task continues stack \"$stack\". Branch your work from \"$base_branch\" (the latest branch already in this stack) instead of the repo's default branch. Below is the previous task's entry from docs/stack-notes/$stack.md (written by earlier tasks in this same stack), followed by the headings of any older entries -- use it as your context instead of inspecting their full diffs or commit history. The older entries are in docs/stack-notes/$stack.md on disk; read them only if you need them:
 
 ---
 $stack_notes
 ---
 
-Before finishing, append your own entry to docs/stack-notes/$stack.md (never rewrite earlier entries) in the same format used above: a heading with this task's number and title, a \"Branch: <your-branch-name>\" line, key decisions, interfaces/exports created, and any deviation from acceptance criteria. Commit it as part of this task's own work, on this task's own branch."
+Before finishing, append your own entry to docs/stack-notes/$stack.md (never rewrite earlier entries) in the same format used above (a \"## \" heading, with \"###\" or lower for any sub-headings inside the entry): a heading with this task's number and title, a \"Branch: <your-branch-name>\" line, key decisions, interfaces/exports created, and any deviation from acceptance criteria. Commit it as part of this task's own work, on this task's own branch."
   else
     p="$p
 
@@ -610,8 +630,8 @@ dispatch() {
     DISPATCH_TMP_RAW="$(mktemp)"
 
     # The prompt goes in on stdin, not as a -p argument: Windows caps a command
-    # line at ~32K chars, and a stacked task's prompt embeds its whole
-    # stack-notes file, which can blow past that ("Argument list too long").
+    # line at ~32K chars, and a prompt can still blow past that (task text plus
+    # stack-notes entry, retry notes) ("Argument list too long").
     printf '%s' "$prompt" \
       | claude \
       --add-dir "$repo_path" \
@@ -939,7 +959,7 @@ run_repo() {
     local base_branch; base_branch="$(resolve_base_branch "$repo_path" "$stack" "$branch" stack_branch)"
     local stack_notes=""
     if [[ "$stack" != "solo" && -f "$repo_path/docs/stack-notes/$stack.md" ]]; then
-      stack_notes="$(cat "$repo_path/docs/stack-notes/$stack.md")"
+      stack_notes="$(extract_latest_stack_note "$repo_path/docs/stack-notes/$stack.md")"
     fi
 
     local task_title

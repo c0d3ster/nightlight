@@ -41,3 +41,17 @@ Key decisions:
 Interfaces created: none new; `dispatch()` gained an optional `run_log` arg. README logs section updated; `logs/` was already gitignored.
 
 Deviation: the log slug is title-derived rather than reused from branch naming, since the script never computes a branch slug.
+
+## `#28` Cap the stack notes injected into a stacked task's prompt
+
+Branch: overnight/2026-10-20/r1-03-t28-cap-stack-notes
+
+Key decisions:
+- `extract_latest_stack_note <file>` (awk only) prints the last `^## ` block, then a blank line and an "Earlier entries (headings only)" list. One entry prints just that entry; a file with no `^## ` heading prints whole. `run_repo()` calls it where it used to `cat` the file, so a missing file still yields an empty `stack_notes` and the "starts stack" branch.
+- The stacked branch of `build_task_prompt()` now says the block is the previous task's entry, older ones are on disk, read only if needed, and tells tasks to use `###` or lower inside entries. First-task and solo prompts are unchanged. `resolve_base_branch()` is untouched and still reads the last `Branch:` line from the file on disk.
+- Reworded the stale whole-file comments in the `overnight.sh` header and `dispatch()`; updated CLAUDE.md Execution model and README (two spots).
+- Verified with 3-entry, 1-entry and no-heading fixtures plus `bash -n`.
+
+Interfaces created: `extract_latest_stack_note` in `overnight.sh`.
+
+No deviation from acceptance criteria.
