@@ -782,6 +782,36 @@ record_session_totals() {
   echo "=== $name: this run cost \$$cost across $calls subprocess call(s), $turns turns, $cache_read cache-read tokens ==="
 }
 
+# Reads taskSource and its config blocks from $1 (repo path)'s
+# docs/nightlight-meta.json, then sources lib/task-source-<name>.sh. Missing
+# file or field means local. Sets TASK_SOURCE, TS_GITHUB_REPO, TS_LINEAR_TEAM_ID
+# and TS_LABELS_JSON (the raw optional labels object, "{}" if absent) for the
+# modules to read. Only the chosen source's block is read.
+load_task_source() {
+  local repo_path="$1" meta="$1/docs/nightlight-meta.json"
+  TASK_SOURCE=local TS_GITHUB_REPO="" TS_LINEAR_TEAM_ID="" TS_LABELS_JSON="{}"
+  if [[ -f "$meta" ]]; then
+    jq -e . "$meta" >/dev/null 2>&1 || { echo "error: $meta is not valid JSON"; return 1; }
+    TASK_SOURCE="$(jq -r '.taskSource // "local"' "$meta")"
+    TS_LABELS_JSON="$(jq -c '.labels // {}' "$meta")"
+  fi
+  case "$TASK_SOURCE" in
+    local) ;;
+    github)
+      TS_GITHUB_REPO="$(jq -r '.github.repo // empty' "$meta")"
+      [[ -n "$TS_GITHUB_REPO" ]] || { echo "error: taskSource is \"github\" but github.repo is missing in $meta"; return 1; }
+      ;;
+    linear)
+      TS_LINEAR_TEAM_ID="$(jq -r '.linear.teamId // empty' "$meta")"
+      [[ -n "$TS_LINEAR_TEAM_ID" ]] || { echo "error: taskSource is \"linear\" but linear.teamId is missing in $meta"; return 1; }
+      ;;
+    *) echo "error: unknown taskSource \"$TASK_SOURCE\" in $meta (expected local, github, or linear)"; return 1 ;;
+  esac
+  local module="lib/task-source-$TASK_SOURCE.sh"
+  [[ -f "$module" ]] || { echo "error: taskSource \"$TASK_SOURCE\" is not implemented yet ($module missing)"; return 1; }
+  source "$module"
+}
+
 run_repo() {
   local repo_path="$1"
   # Canonicalize before naming anything off it: a relative arg like "."
@@ -795,12 +825,12 @@ run_repo() {
   repo_path="$(cd "$repo_path" 2>/dev/null && pwd -W)" || { echo "error: can't resolve target repo path: $1"; return 1; }
   local name; name="$(basename "$repo_path")"
   local tasks="$repo_path/TASKS.md"
-  source lib/task-source-local.sh
+  load_task_source "$repo_path" || return 1
   if [[ -n "$STOP_AFTER" && "$TS_NUMERIC_IDS" != 1 ]]; then
     echo "error: --stop-after needs numeric task ids, and this task source uses opaque ids"; return 1
   fi
 
-  [[ -f "$tasks" ]] || { echo "skip: $name (no TASKS.md)"; return 0; }
+  [[ "$TASK_SOURCE" != local || -f "$tasks" ]] || { echo "skip: $name (no TASKS.md)"; return 0; }
   ts_is_eligible "$repo_path" || { echo "skip: $name (no open tasks)"; return 0; }
 
   acquire_lock "$repo_path" "$name" || return 1
