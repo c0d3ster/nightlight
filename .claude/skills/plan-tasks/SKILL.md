@@ -12,6 +12,22 @@ More than one repo attached via --add-dir (`plan.sh`'s no-arg mode passes one `-
 
 `## Discovered` holds raw, un-triaged candidates (no `#<n>`, no `[stack]`) — they're in scope below alongside native Agent-Ready/Verify/Research/Decisions items, for every attached repo.
 
+## Task source mode
+
+Per attached repo, read `taskSource` from its `docs/nightlight-meta.json` (missing file or field = `local`). Run `source lib/task-source.sh && load_task_source <repo>` from the nightlight checkout (it sets `TASK_SOURCE` and loads the `ts_*` functions); a load error means skip that repo and say why. Modes are per repo, so one session can mix them.
+
+- `local`: everything in this file applies exactly as written.
+- `github` (remote): the tracker replaces TASKS.md and `nightlight-meta.json`'s numbering. Never read, edit, or commit TASKS.md or open a chore PR for this repo. Deltas, applied where the named step appears below:
+  - Items: the open issues labeled `nl:discovered` (`gh issue list --label nl:discovered --state open`), plus any open `nl:*`-sectioned issues I name. An item's text is the issue title and body, its id is the issue number.
+  - Investigate: unchanged. The prompt is the issue's text and number plus the repo path; the agent needs no source-specific logic.
+  - Synthesize step 2 (assign `#<n>`): skipped, the issue number is the id. Stack names are still per repo.
+  - Synthesize write: after approval, apply labels with `gh issue edit <n> --add-label <section>,nl:stack:<name> --remove-label nl:discovered` (labels come from the repo's `labels` block, defaults `nl:agent-ready`/`nl:verify`/`nl:research`/`nl:decision`, stack prefix `nl:stack:`). Breakdowns go in as an issue comment (`gh issue comment`). Position: issue number is the order, so skip the position question.
+  - Finalize: skipped entirely. The write landed on approval; report the issue URLs instead.
+
+## Dedupe (every mode)
+
+Before Investigate, for each Discovered item run `ts_find_related <repo> "<short distinctive phrase from the item>"` (output: state, id, title or file:line). Local matches by fixed string, so keep the phrase short. Ignore a match that is the item itself. For matches that look implemented, confirm with a cheap code check: dispatch `task-scout` in verify mode (prompt: the item text, the related items with ids and states, and the repo path), in parallel with the other lookups. Then show every match in the proposal with its id, state (open, closed, archived, or looks implemented) and a one-line reason, and ask per match: skip the item, reopen the closed one, link the item to it as a follow-up, or create it anyway. Never drop an item silently. Items with no matches proceed as normal.
+
 ## Investigate (parallel)
 
 Every unchecked item across every attached repo (including Discovered ones) gets its own investigation — dispatch one `task-investigator` agent per item, all as parallel foreground tool calls in a single message, regardless of which repo it belongs to. Never investigate items one at a time in the main thread; that's the slow path this phase replaces. If there are more than ~8 items total, dispatch in batches of that size rather than serially one-by-one.
