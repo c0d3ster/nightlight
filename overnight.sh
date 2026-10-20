@@ -318,56 +318,6 @@ default_branch() {
   return 1
 }
 
-# Splits $1 (TASKS.md)'s Agent-Ready/Verify/Research task blocks into one file
-# per task under $2 (clearing anything already there), and prints one line per
-# task to stdout: "<number>\t<effective-stack>\t<blockfile>", in file order.
-# Effective stack is the task's own [stack: x] tag, or -- per the
-# stack-by-default rule in CLAUDE.md -- whichever task before it in file order
-# had one, computed here so callers don't have to re-derive inheritance once
-# --stack/--stop-after/--limit filter the list down.
-split_tasks() {
-  local tasks_file="$1" outdir="$2"
-  mkdir -p "$outdir"
-  rm -f "$outdir"/*.task
-
-  local heading_re='^## '
-  local target_heading_re='^## (Agent-Ready|Verify|Research)'
-  local task_re='^- \[ \] #([0-9]+)(.*)$'
-  local stack_re='\[stack: ([A-Za-z0-9_-]+)\]'
-
-  local in_target=0 prev_stack="" idx=0
-  local cur_file="" cur_num="" cur_stack=""
-  local -a index=()
-
-  while IFS= read -r line || [[ -n "$line" ]]; do
-    if [[ "$line" =~ $heading_re ]]; then
-      [[ -n "$cur_file" ]] && index+=("$cur_num"$'\t'"$cur_stack"$'\t'"$cur_file")
-      cur_file=""
-      if [[ "$line" =~ $target_heading_re ]]; then in_target=1; else in_target=0; fi
-      continue
-    fi
-    if [[ $in_target -eq 1 && "$line" =~ $task_re ]]; then
-      [[ -n "$cur_file" ]] && index+=("$cur_num"$'\t'"$cur_stack"$'\t'"$cur_file")
-      idx=$((idx+1))
-      cur_num="${BASH_REMATCH[1]}"
-      local rest="${BASH_REMATCH[2]}"
-      if [[ "$rest" =~ $stack_re ]]; then cur_stack="${BASH_REMATCH[1]}"; else cur_stack="${prev_stack:-solo}"; fi
-      prev_stack="$cur_stack"
-      cur_file="$outdir/$(printf '%04d' "$idx")-$cur_num.task"
-      printf '%s\n' "$line" > "$cur_file"
-      continue
-    fi
-    if [[ $in_target -eq 1 && -n "$cur_file" ]]; then
-      printf '%s\n' "$line" >> "$cur_file"
-    fi
-  done < "$tasks_file"
-  [[ -n "$cur_file" ]] && index+=("$cur_num"$'\t'"$cur_stack"$'\t'"$cur_file")
-
-  local rec
-  for rec in "${index[@]}"; do
-    printf '%s\n' "$rec"
-  done
-}
 
 # Picks this run's number for today: 1 + the highest r<N> already used by an
 # overnight/<today>/r<N>-* branch, local or on origin (1 if none). Keeps
@@ -845,9 +795,10 @@ run_repo() {
   repo_path="$(cd "$repo_path" 2>/dev/null && pwd -W)" || { echo "error: can't resolve target repo path: $1"; return 1; }
   local name; name="$(basename "$repo_path")"
   local tasks="$repo_path/TASKS.md"
+  source lib/task-source-local.sh
 
   [[ -f "$tasks" ]] || { echo "skip: $name (no TASKS.md)"; return 0; }
-  grep -Eq '^\s*- \[ \]' "$tasks" || { echo "skip: $name (no open tasks)"; return 0; }
+  ts_is_eligible "$repo_path" || { echo "skip: $name (no open tasks)"; return 0; }
 
   acquire_lock "$repo_path" "$name" || return 1
   ACTIVE_REPO_PATH="$repo_path"
@@ -881,7 +832,7 @@ run_repo() {
   local -a task_records=()
   while IFS=$'\t' read -r num stack blockfile; do
     task_records+=("$num"$'\t'"$stack"$'\t'"$blockfile")
-  done < <(split_tasks "$tasks" "$blockdir")
+  done < <(ts_list_tasks "$repo_path" "$blockdir")
 
   if [[ ${#task_records[@]} -eq 0 ]]; then
     echo "skip: $name (no tasks found in Agent-Ready/Verify/Research)"
@@ -1013,7 +964,7 @@ run_repo() {
     # Only trust a TASK_RESULT line that names THIS task's own number -- a
     # stale or malformed one (wrong #, or none at all) falls back to the same
     # synthesized "unknown" line extract_task_result's absence would produce.
-    local task_result_re="^TASK_RESULT: #$num "
+    local task_result_re; task_result_re="$(ts_task_result_re "$num")"
     if [[ -z "$task_result" || ! "$task_result" =~ $task_result_re ]]; then
       if [[ -n "$task_result" ]]; then
         echo "warn: task #$num's TASK_RESULT line didn't match its own task number, ignoring it: $task_result"
