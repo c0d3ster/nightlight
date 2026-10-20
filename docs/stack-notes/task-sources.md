@@ -82,4 +82,4 @@ Branch: overnight/2026-10-20/r2-08-t20-github-mode-permissions-docs
 - CLAUDE.md: new "GitHub mode" subsection inserted before "Task numbering". Existing local-mode lines untouched.
 - README: new "GitHub Issues task source (opt-in)" section before "TASKS.md format", stating local stays the default, covering `taskSource`, `github.repo`, labels, and the public-repo label-permission caveat.
 - Interfaces: none (docs and settings only).
-- Deviation: documented the labels override keys from `ts_gh_label` usage (`agentReady`, `verify`, `research`, `blocked`, `needsHuman`, `stackPrefix`); `nl:discovered` default taken from the #18 notes. The `nl:` prefixed `Edit` allow already present was left alone.
+- Deviation: documented the labels override keys from `ts_gh_label` usage (`agentReady`, `verify`, `research`, `blocked`, `needsHuman`, `stackPrefix`); `nl:discovered` default taken from the #18 notes.
