@@ -30,7 +30,7 @@ Announce each phase to me in one line before starting it.
 
 1. Read the target repo's MEMORY.md and its indexed files. Pull only entries reading as concrete, discrete work — most `project`-type memories are context, not tasks.
 2. Cross-reference against the target repo's TASKS.md (open items) and `docs/tasks-archive/*.md` (completed). Drop anything already covered.
-3. `--scan` passed: dispatch one `task-scout` agent (foreground, absolute repo path in the prompt) for the read-only Docs and README passes, or use its result directly if already inside a per-repo dispatch. Its agent file defines the passes and the output contract (task text, rationale, source).
+3. `--scan` passed: dispatch one `task-scout` agent (foreground, absolute repo path in the prompt) for the read-only Docs, README, and code passes, or use its result directly if already inside a per-repo dispatch. Its agent file defines the passes and the output contract (task text, rationale, source).
 4. Announce: "Found N candidate(s) from memory[, M from repo scan]." Present the full list — task text, one-line rationale, source — for my approval. Write nothing until I approve; accept/reject individually.
 
 ## Phase 3: write approved candidates
