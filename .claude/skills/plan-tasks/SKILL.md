@@ -14,14 +14,9 @@ More than one repo attached via --add-dir (`plan.sh`'s no-arg mode passes one `-
 
 ## Investigate (parallel)
 
-Every unchecked item across every attached repo (including Discovered ones) gets its own investigation — dispatch one `Plan`-type agent per item, all as parallel foreground tool calls in a single message, regardless of which repo it belongs to. Never investigate items one at a time in the main thread; that's the slow path this phase replaces. If there are more than ~8 items total, dispatch in batches of that size rather than serially one-by-one.
+Every unchecked item across every attached repo (including Discovered ones) gets its own investigation — dispatch one `task-investigator` agent per item, all as parallel foreground tool calls in a single message, regardless of which repo it belongs to. Never investigate items one at a time in the main thread; that's the slow path this phase replaces. If there are more than ~8 items total, dispatch in batches of that size rather than serially one-by-one.
 
-Each dispatch is self-contained (the agent has no memory of this session) and must state: the item's exact text, its repo's absolute path, and that it should read that repo's CLAUDE.md itself for conventions. Ask each agent to report back — never implement — with:
-
-1. For a Discovered item: which section it actually belongs in — Agent-Ready (the common case), Verify, Research, or Decisions (flag for my judgment).
-2. A sub-task breakdown with file-level hints and any missing acceptance criteria.
-3. Missing prerequisites (fixtures, env vars, dependencies) as candidate NEEDS HUMAN annotations.
-4. The concrete files/schemas/exports/components it expects to touch — needed for the cross-item overlap analysis below.
+Each dispatch is self-contained (the agent has no memory of this session): its prompt is just the item's exact text and its repo's absolute path. The agent file defines the standing instructions and the four-part report (section, breakdown, prerequisites, touch-points); never implement.
 
 ## Synthesize
 
