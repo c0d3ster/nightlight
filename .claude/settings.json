@@ -27,6 +27,8 @@
       "Bash(git -C * push origin chore/tasks-discover-*)",
       "Bash(git push origin chore/tasks-plan-*)",
       "Bash(git -C * push origin chore/tasks-plan-*)",
+      "Bash(git push origin chore/tasks-migrate-*)",
+      "Bash(git -C * push origin chore/tasks-migrate-*)",
       "Bash(git pull:*)",
       "Bash(git -C * pull:*)",
       "Bash(gh pr create:*)",
@@ -43,7 +45,8 @@
       "Bash(git push origin --delete overnight/*)",
       "Bash(git branch -D overnight/*)",
       "Bash(gh pr merge chore/tasks-discover-*:*)",
-      "Bash(gh pr merge chore/tasks-plan-*:*)"
+      "Bash(gh pr merge chore/tasks-plan-*:*)",
+      "Bash(gh pr merge chore/tasks-migrate-*:*)"
     ],
     "deny": [
       "Bash(git push origin main:*)",

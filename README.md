@@ -43,7 +43,7 @@ This `.env` only ever holds `PROJECT_REPOS_DIR` — a path, not a secret — and
 3. Edit `CLAUDE.md` here if you want to change the workflow rules (branching scheme, quality gates, how research tasks work, etc.) — the defaults are a reasonable starting point.
 4. Edit `.claude/settings.json` to match your actual test/lint/build commands (defaults assume npm/pnpm).
 5. In each target repo, add a `TASKS.md` with your work queue and confirm `CLAUDE.md` has a test command and conventions documented. That's the only setup required in the target repo itself.
-6. `chmod +x overnight.sh plan.sh discover.sh nightlight.sh stats.sh`. No `pnpm install` needed — `package.json` has no dependencies, it's just script aliases.
+6. `chmod +x overnight.sh plan.sh discover.sh migrate.sh nightlight.sh stats.sh`. No `pnpm install` needed — `package.json` has no dependencies, it's just script aliases.
 
 ## nightlight.sh
 
@@ -156,6 +156,7 @@ Skills live in a named folder with a `SKILL.md` inside (not a flat `.md` file di
 pnpm nightlight [repo] [--scan] [overnight flags]  # ./nightlight.sh [repo] [--scan] [overnight flags]
 pnpm discover [repo] [--scan]                       # ./discover.sh [repo] [--scan]
 pnpm plan [repo]                                     # ./plan.sh [repo]
+pnpm migrate <repo> --to github                      # ./migrate.sh <repo> --to github
 pnpm overnight some-repo                             # ./overnight.sh some-repo
 pnpm stats [some-repo]                               # ./stats.sh [some-repo]
 ```
