@@ -8,3 +8,13 @@ Branch: overnight/2026-10-20/r2-01-t13-extract-task-source-local
 - Not yet done: `taskSource` config dispatch (module is sourced unconditionally), `TS_NUMERIC_IDS` check on `--stop-after`, the other `#$num` match sites (sed patterns on the TASK_RESULT line), and `/discover-tasks` calling `ts_find_related`.
 - Verified: `ts_list_tasks` output and concatenated block files are byte-identical to the old `split_tasks` on this repo's TASKS.md.
 - Deviation: none.
+
+## #14 Generalize `TASK_RESULT` matching and `--stop-after` to opaque task ids
+
+Branch: overnight/2026-10-20/r2-02-t14-generalize-task-result-ids
+
+- New module function `ts_task_result_label(id)` (local: `#<id>`). It is the one place the id format is written; `ts_task_result_re` now builds on it, and `build_task_prompt` and the synthesized "unknown" TASK_RESULT line call it too.
+- The two `sed` extractions in the dispatch loop use `^TASK_RESULT: [^ ]* status=...` instead of `#$num`. They only run on a line already validated by `task_result_re`, so the id stays opaque.
+- `run_repo()` errors (returns 1) right after sourcing the module when `--stop-after` is set and `TS_NUMERIC_IDS != 1`. The `-gt` comparison in the loop is unchanged and is the only numeric use of the id.
+- Not done: `record_task_entry` still passes `--argjson num` and `docs/stats-schema.json` still says `taskNumber` is an integer, so a non-numeric source will need that relaxed when one is added.
+- Deviation: none.
