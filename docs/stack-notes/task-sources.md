@@ -52,3 +52,14 @@ Branch: overnight/2026-10-20/r2-05-t17-plan-eligibility-task-source
 - `discover.sh` unchanged (no gate in no-arg mode, per the task).
 - Tested with temp repos and stubbed `gh`/`claude`: local open/closed/missing TASKS.md and a github repo with no issues. No live GitHub test.
 - Deviation: none.
+
+## #18 Mode detection in `/plan-tasks` and `/discover-tasks` skills
+
+Branch: overnight/2026-10-20/r2-06-t18-skill-mode-detection
+
+- Both skills gained a "Task source mode" section and a "Dedupe (every mode)" section, inserted before existing content. No existing line was edited, so local-mode text is untouched.
+- Mode is read per repo via `source lib/task-source.sh && load_task_source <repo>`, which also loads the `ts_*` functions the dedupe step calls.
+- Remote (`github`) deltas: discover Phase 3 runs `gh issue create --label nl:discovered`, Phase 4 skipped; plan uses `nl:discovered` issues as its items, skips `#<n>` assignment, applies section/stack labels via `gh issue edit` (breakdowns as a comment), skips Finalize. Neither touches TASKS.md or opens a chore PR.
+- Dedupe: `ts_find_related` per candidate/Discovered item, `task-scout` verify mode for matches that look implemented, every match shown with state, per-match choice (skip, reopen, link as follow-up, create anyway), no silent drops. Existing discover Phase 2 step 2 cross-reference left in place.
+- Interfaces: none new in code (skill docs only). Linear is not documented in the skills (module not implemented yet).
+- Deviation: none. Not exercised live (skills are prompts).
