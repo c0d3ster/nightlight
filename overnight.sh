@@ -505,6 +505,8 @@ Before opening that PR, also do the branch-cleanup sweep documented in the same 
 
 Also check every [/] (NEEDS HUMAN) line already in TASKS.md, not just ones reported this run -- per CLAUDE.md, check each one's PR merge state and archive+remove any that have since merged.
 
+Also sweep every [!] (blocked) line in TASKS.md whose annotation blocks on a dependency (another task or a PR), not just ones reported this run -- per CLAUDE.md, check each referenced PR's merge state; if every dependency has merged, set the line back to [ ] and remove the BLOCKED annotation. Leave [!] lines blocked for any other reason, or whose gh check fails, exactly as they are.
+
 Likewise sweep every [x] (checked off) line in TASKS.md, not just ones reported this run -- a task checked off by hand is complete but would otherwise sit in TASKS.md forever. Confirm each one's PR state with gh, then archive+remove it and count it in tasksCompleted (a [x] whose PR has not merged goes back to [/] instead)."
 
   printf '%s' "$p"
