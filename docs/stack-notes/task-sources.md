@@ -63,3 +63,13 @@ Branch: overnight/2026-10-20/r2-06-t18-skill-mode-detection
 - Dedupe: `ts_find_related` per candidate/Discovered item, `task-scout` verify mode for matches that look implemented, every match shown with state, per-match choice (skip, reopen, link as follow-up, create anyway), no silent drops. Existing discover Phase 2 step 2 cross-reference left in place.
 - Interfaces: none new in code (skill docs only). Linear is not documented in the skills (module not implemented yet).
 - Deviation: none. Not exercised live (skills are prompts).
+
+## #19 Remote housekeeping path (GitHub)
+
+Branch: overnight/2026-10-20/r2-07-t19-remote-housekeeping-github
+
+- `build_housekeeping_prompt()` now returns early to new `build_housekeeping_prompt_github()` when `TASK_SOURCE=github`. The local body is untouched (output verified byte-identical).
+- GitHub prompt: confirm real PR state, close issues `--reason completed` with a PR-link comment only after the PR merged, `nl:blocked` + reason, `nl:needs-human` + steps, close `nl:needs-human` issues whose PR merged, flag (comment + PR body, no label change) contradictory labels. No TASKS.md or archive writes; `tasksCompleted`/`tasksBlocked` still go through the housekeeping commit + PR; stack-notes sweep kept, using `nl:stack:<name>` open issues instead of TASKS.md tags.
+- Label names come from `ts_gh_label`, so `labels` overrides in meta.json apply.
+- Interfaces: `build_housekeeping_prompt_github` in `overnight.sh`.
+- Deviation: none. Not exercised live (prompt text only); the `[!]` dependency-resolved sweep has no remote analog in the plan, so it is not included.
