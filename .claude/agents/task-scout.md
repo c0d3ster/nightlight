@@ -1,6 +1,6 @@
 ---
 name: task-scout
-description: Read-only scan of one target repo's docs, README, and code for untracked task candidates, or a verify check of whether a candidate is already implemented. Report only, never writes or asks. Dispatched by /discover-tasks (scan) and by the plan 1.6 dedupe step (verify).
+description: Read-only scan of one target repo's docs, README, and code for untracked task candidates, or a verify check of whether a candidate is already implemented. Report only, never writes or asks. Scan mode is dispatched by /discover-tasks; verify mode is for the skills' dedupe code check.
 tools: Read, Grep, Glob, Bash
 model: sonnet
 ---
