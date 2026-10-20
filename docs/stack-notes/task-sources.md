@@ -29,3 +29,15 @@ Branch: overnight/2026-10-20/r2-03-t15-task-source-config
 - The "no TASKS.md" skip in `run_repo()` now applies only to `local`; other sources go straight to `ts_is_eligible`.
 - Not done: nothing consumes the `TS_*` config vars yet; the github/linear modules are future tasks.
 - Deviation: none.
+
+## #16 Add `lib/task-source-github.sh`
+
+Branch: overnight/2026-10-20/r2-04-t16-task-source-github
+
+- New `lib/task-source-github.sh` implementing `TS_NUMERIC_IDS=1`, `ts_is_eligible`, `ts_list_tasks`, `ts_task_result_label`, `ts_task_result_re`, `ts_find_related`.
+- One fetch per run: `ts_is_eligible` runs `gh issue list` once per section label, merges (dedupes by number), drops `nl:blocked`/`nl:needs-human`, sorts by number, and caches the result in a temp file (`TS_GH_CACHE`). `ts_list_tasks` reads that cache (fetching only if `ts_is_eligible` wasn't called first). Re-sourcing the module per repo resets the cache.
+- Block file per issue: `- [ ] #<n> [stack: <x>] <title>`, blank line, body, then comments with `authorAssociation` OWNER/MEMBER/COLLABORATOR only (`### Comment by <login>`). Issue body is included as-is (the section label is the gate). Stack from the `stackPrefix` label, else previous task's stack, else solo.
+- Label names honor the `labels` config block (`agentReady`, `verify`, `research`, `blocked`, `needsHuman`, `stackPrefix`) via `TS_LABELS_JSON`.
+- `ts_find_related` prints `<open|closed>\t#<n>\t<title>` from `gh issue list --state all --search`.
+- `build_task_prompt` gets a github-mode paragraph (gated on `TASK_SOURCE == github`): issue number, `gh issue view <n> --comments [--repo ...]`, backtick `#<n>` in the PR body, no `Closes`, no status labels. Local prompts unchanged.
+- Deviation: `load_task_source` no longer errors on a missing `github.repo`; the module falls back to `gh repo view` on the target's origin (per the task). Tested with a stubbed `gh` only, not a live repo.
