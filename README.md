@@ -221,6 +221,28 @@ Switching to `stream-json` only changes how the CLI reports events to us locally
 - **Within a stack, later tasks don't wait for earlier ones to be reviewed.** Each task branches from the previous task's branch tip (resolved for it by `overnight.sh`'s dispatch loop, from stack-notes), so task 2 builds on task 1's code as soon as it's written, regardless of whether you've looked at task 1's PR yet. A `NEEDS HUMAN` annotation on task 1 (missing env var, API key, etc.) doesn't pause the stack — the code is presumed complete, just not fully runnable without that step.
 - **`blocked` is for cross-stack dependencies, not same-stack ordering.** It only gets used when a task turns out mid-implementation to depend on work in a *different* stack. If a task's correctness genuinely depends on the real-world outcome of an earlier same-stack task's human-verification step (not just on that task's code existing), there's no automatic rule catching that today — it falls to the agent's judgment under the general "ambiguous, annotate why, skip it" rule.
 
+## GitHub Issues task source (opt-in)
+
+Local `TASKS.md` stays the default. Nothing changes unless a target repo opts in. To use GitHub issues as the work queue instead, set this in the target repo's `docs/nightlight-meta.json`:
+
+```json
+{
+  "taskSource": "github",
+  "github": { "repo": "owner/name" },
+  "labels": { "agentReady": "nl:agent-ready" }
+}
+```
+
+- `taskSource`: `"local"` (default, `TASKS.md`) or `"github"`.
+- `github.repo`: optional, defaults to the target repo's `origin`.
+- `labels`: optional overrides. Defaults are `nl:agent-ready`, `nl:verify`, `nl:research` (section), `nl:blocked`, `nl:needs-human`, `nl:discovered` (un-triaged), and `nl:stack:<name>` (stack). Override keys: `agentReady`, `verify`, `research`, `blocked`, `needsHuman`, `stackPrefix`.
+
+An open issue with a section label is a task, and its number is the task id. Housekeeping closes issues once their PR merges and applies `nl:blocked` / `nl:needs-human` with a comment. It does not write TASKS.md or the archive.
+
+**Public repos:** issue text is untrusted input fed to an unattended agent with write tools. The section label is the gate, and applying a label needs triage or write access, so strangers can't dispatch work. Only comments from `OWNER`, `MEMBER`, and `COLLABORATOR` authors are included in the task body. Still, `taskSource: "github"` on a public repo assumes your label permissions are tight: keep triage access limited to people you trust.
+
+Permissions: `.claude/settings.json` allows only `gh issue view/list/comment/create/edit` and denies `gh issue delete` and `gh repo delete`. There is no blanket `gh` or MCP allow.
+
 ## TASKS.md format (in the target repo)
 
 ```markdown
