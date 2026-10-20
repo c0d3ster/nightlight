@@ -603,7 +603,7 @@ check_rate_limit_block() {
 # forever; past that it falls through and returns the failed attempt like any
 # other dispatch failure.
 dispatch() {
-  local prompt="$1" repo_path="$2" raw_log="$3" readable_log="$4" errlog="$5"
+  local prompt="$1" repo_path="$2" raw_log="$3" readable_log="$4" errlog="$5" run_log="${6:-/dev/null}"
   local pause_retries=0 claude_status=0
 
   while true; do
@@ -624,7 +624,7 @@ dispatch() {
       2>>"$errlog" \
       | tee "$DISPATCH_TMP_RAW" \
       | jq -r -f format-stream.jq \
-      | tee -a "$readable_log"
+      | tee -a "$readable_log" "$run_log"
     claude_status="${PIPESTATUS[1]}"
 
     cat "$DISPATCH_TMP_RAW" >> "$raw_log"
@@ -834,13 +834,18 @@ run_repo() {
   local branch; branch="$(default_branch "$repo_path")" || { end_repo; return 1; }
   git -C "$repo_path" checkout "$branch" && git -C "$repo_path" pull
 
-  mkdir -p logs
-  local raw_log="logs/$name-$(date +%F).jsonl"
-  local readable_log="logs/$name-$(date +%F).log"
-  local errlog="logs/$name-$(date +%F).stderr.log"
+  # One folder per repo per day; each run's files are told apart by their
+  # r<R>- prefix, matching the overnight/<date>/r<R>-... branch names.
+  local today; today="$(date +%F)"
+  local logdir="logs/$name/$today"
+  mkdir -p "$logdir"
+  local run_num; run_num="$(next_run_number "$repo_path" "$today")"
+  local run_log="$logdir/r$run_num-run.log"
 
   if [[ -n "$OVERRIDE_PROMPT" ]]; then
-    dispatch "$OVERRIDE_PROMPT" "$repo_path" "$raw_log" "$readable_log" "$errlog" \
+    local base="$logdir/r$run_num-override"
+    local errlog="$base.stderr.log"
+    dispatch "$OVERRIDE_PROMPT" "$repo_path" "$base.jsonl" "$base.log" "$errlog" "$run_log" \
       || echo "warn: claude exited non-zero for $name's override-prompt session -- check $errlog"
     update_stats "$name" "$DISPATCH_TMP_RAW"
     rm -f "$DISPATCH_TMP_RAW"
@@ -863,7 +868,6 @@ run_repo() {
     return 0
   fi
 
-  local run_num; run_num="$(next_run_number "$repo_path" "$(date +%F)")"
   local -A stack_branch=()
   local attempted=0 consecutive_failures=0
   local run_summary="" skipped_summary=""
@@ -944,8 +948,14 @@ run_repo() {
     local task_prompt
     task_prompt="$(build_task_prompt "$(cat "$blockfile")" "$num" "$stack" "$base_branch" "$stack_notes" "$(printf '%02d' $((attempted+1)))" "$run_num" "$retried")"
 
+    # Same r<R>-<PP>-t<NN> as the branch name told to the subprocess, plus a
+    # slug derived from the task title.
+    local task_slug; task_slug="$(printf '%s' "$task_title" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+|-+$//g' | cut -c1-40 | sed -E 's/-+$//')"
+    local base; base="$logdir/r$run_num-$(printf '%02d' $((attempted+1)))-t$(printf '%02d' "$num")-${task_slug:-task}"
+    local errlog="$base.stderr.log"
+
     echo "--- dispatching task #$num [stack: $stack] ---"
-    if dispatch "$task_prompt" "$repo_path" "$raw_log" "$readable_log" "$errlog"; then
+    if dispatch "$task_prompt" "$repo_path" "$base.jsonl" "$base.log" "$errlog" "$run_log"; then
       consecutive_failures=0
     else
       consecutive_failures=$((consecutive_failures+1))
@@ -957,6 +967,7 @@ run_repo() {
         record_task_entry "$num" "$task_title" "dispatch-error"
         record_session_totals "$name" "$session_calls" "$session_cost" "$session_duration" "$session_turns" "$session_cache_read" "$session_cache_creation" "$session_input" "$session_output" "$(printf '%s\n' "${session_task_entries[@]}" | jq -s '.')"
         rm -f "$DISPATCH_TMP_RAW"
+        [[ -s "$errlog" ]] || rm -f "$errlog"
         rm -rf "$blockdir"
         end_repo
         return 1
@@ -967,6 +978,7 @@ run_repo() {
 
     local task_result; task_result="$(extract_task_result "$DISPATCH_TMP_RAW")"
     rm -f "$DISPATCH_TMP_RAW"
+    [[ -s "$errlog" ]] || rm -f "$errlog"
 
     # Only trust a TASK_RESULT line that names THIS task's own number -- a
     # stale or malformed one (wrong #, or none at all) falls back to the same
@@ -1010,7 +1022,9 @@ $task_result"
 
   local housekeeping_prompt; housekeeping_prompt="$(build_housekeeping_prompt "$run_summary" "$skipped_summary" "$run_num")"
   echo "--- dispatching housekeeping ---"
-  dispatch "$housekeeping_prompt" "$repo_path" "$raw_log" "$readable_log" "$errlog" \
+  local hk_base="$logdir/r$run_num-housekeeping"
+  local errlog="$hk_base.stderr.log"
+  dispatch "$housekeeping_prompt" "$repo_path" "$hk_base.jsonl" "$hk_base.log" "$errlog" "$run_log" \
     || echo "warn: claude exited non-zero for $name's housekeeping session -- check $errlog"
   update_stats "$name" "$DISPATCH_TMP_RAW"
   accumulate_session
