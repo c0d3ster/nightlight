@@ -55,3 +55,17 @@ Key decisions:
 Interfaces created: `extract_latest_stack_note` in `overnight.sh`.
 
 No deviation from acceptance criteria.
+
+## `#29` Delete stack-notes file once the stack is finished
+
+Branch: overnight/2026-10-20/r1-04-t29-delete-finished-stack-notes
+
+Key decisions:
+- Docs + prompt text only, as with `#9`: housekeeping is a Claude session following CLAUDE.md, so no parsing code. `build_housekeeping_prompt()` now says branch deletion stays outside the commit (and happens even when the file is kept), and that the notes-file `git rm` comes after the merge-state check, inside the housekeeping commit, listed in the PR body.
+- The four "finished" conditions (all Branch: PRs merged, no open task under any glyph, no open PR head for the stack, no dispatched task this run) are stated in both CLAUDE.md and the prompt. Any failed check, a `gh` failure, or zero `Branch:` lines keeps the file.
+- CLAUDE.md: commit-contents list, "only PR touching" line, sweep bullet, and a lifecycle sentence in the Execution model (resumed stack with no file takes the "starts stack" path and recreates it). README stack-notes paragraph gets the same one-liner.
+- `core-loop.md` is untouched by this change; it stays while `core-loop` has open tasks.
+
+Interfaces created: none.
+
+No deviation from acceptance criteria. Local mode only; `#19` and `#25` add the remote variant.
