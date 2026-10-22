@@ -83,3 +83,13 @@ Branch: overnight/2026-10-20/r2-08-t20-github-mode-permissions-docs
 - README: new "GitHub Issues task source (opt-in)" section before "TASKS.md format", stating local stays the default, covering `taskSource`, `github.repo`, labels, and the public-repo label-permission caveat.
 - Interfaces: none (docs and settings only).
 - Deviation: documented the labels override keys from `ts_gh_label` usage (`agentReady`, `verify`, `research`, `blocked`, `needsHuman`, `stackPrefix`); `nl:discovered` default taken from the #18 notes.
+
+## #32 `pnpm migrate`: local TASKS.md to GitHub issues
+
+Branch: overnight/2026-10-20/r2-09-t32-migrate-tasks-to-github
+
+- `migrate.sh <repo> --to github` (wired as `pnpm migrate`) launches `/migrate-tasks --to github` with the repo attached. Repo arg is required, no no-arg fan-out; only `--to github` is accepted.
+- `.claude/skills/migrate-tasks/SKILL.md`: dedupe via `ts_find_related` (plus a `Migrated from TASKS.md #<n>` body search for idempotency), approval-gated issue creation, review of unlabeled open issues via `task-scout` verify mode, then a `chore/tasks-migrate-<date>` PR that archives old items to a new `docs/tasks-archive/<date>-migrated.md` and flips `taskSource`. The flip only happens after issues exist.
+- `.claude/settings.json`: allow `gh label create`, push and merge for `chore/tasks-migrate-*`.
+- Interfaces: `migrate.sh`, `/migrate-tasks` skill.
+- Deviation: not exercised live against GitHub. Decisions and Discovered sections are left in TASKS.md rather than migrated. A wording slip in SKILL.md's label line (Phase 2 step 2) could not be fixed because the edit was permission-blocked.
