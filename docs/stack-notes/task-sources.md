@@ -73,3 +73,13 @@ Branch: overnight/2026-10-20/r2-07-t19-remote-housekeeping-github
 - Label names come from `ts_gh_label`, so `labels` overrides in meta.json apply.
 - Interfaces: `build_housekeeping_prompt_github` in `overnight.sh`.
 - Deviation: none. Not exercised live (prompt text only); the `[!]` dependency-resolved sweep has no remote analog in the plan, so it is not included.
+
+## #20 GitHub mode permissions and docs
+
+Branch: overnight/2026-10-20/r2-08-t20-github-mode-permissions-docs
+
+- `.claude/settings.json`: allow `gh issue view/list/comment/create/edit`, deny `gh issue delete` and `gh repo delete`. No blanket `gh` or MCP allow.
+- CLAUDE.md: new "GitHub mode" subsection inserted before "Task numbering". Existing local-mode lines untouched.
+- README: new "GitHub Issues task source (opt-in)" section before "TASKS.md format", stating local stays the default, covering `taskSource`, `github.repo`, labels, and the public-repo label-permission caveat.
+- Interfaces: none (docs and settings only).
+- Deviation: documented the labels override keys from `ts_gh_label` usage (`agentReady`, `verify`, `research`, `blocked`, `needsHuman`, `stackPrefix`); `nl:discovered` default taken from the #18 notes.
