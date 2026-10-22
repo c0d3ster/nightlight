@@ -16,6 +16,20 @@ Determine this from the attached directory's structure, never by assumption: doe
   2. Dispatch one `general-purpose` agent per repo for Phase 1 + Phase 2 steps 1–2 (memory only), and, when `--scan` is passed, one `task-scout` agent per repo for the scan (subagents generally cannot spawn subagents, so dispatch `task-scout` directly from here). All in a single message, foreground, batched in groups of ~8 if there are more than that, each told its one repo's absolute path. Each reports candidates only (task text, rationale, source) — report only, never ask, never write.
   3. Once every dispatch returns, go through repos in the order they were listed. For each one: run Phase 2 step 4 (present its candidates, get my approval), then immediately Phase 3 (write) and Phase 4 (finalize) for that repo, before moving to the next.
 
+## Task source mode
+
+Per repo (in multi-repo mode, each subdirectory), read `taskSource` from its `docs/nightlight-meta.json` (missing file or field = `local`). Run `source lib/task-source.sh && load_task_source <repo>` from the nightlight checkout (it sets `TASK_SOURCE` and loads the `ts_*` functions); a load error means skip that repo and say why.
+
+- `local`: Phases 1-4 apply exactly as written.
+- `github` (remote): never edit TASKS.md, delete nothing from TASKS.md, and open no chore PR for this repo. Deltas:
+  - Phase 2 step 2: dedupe through the Dedupe section below instead of TASKS.md and `docs/tasks-archive/`.
+  - Phase 3: for each approved candidate run `gh issue create --repo <github.repo or origin> --title "<task text>" --body "<rationale, source>" --label nl:discovered` (label name from the repo's `labels.discovered` if set). Memory-sourced items still get their source memory file and MEMORY.md line deleted (step 3), but that is a local memory edit, not a commit. Announce "Done - N issue(s) created, N memory file(s) cleared."
+  - Phase 4: skipped entirely. Report the created issue URLs instead.
+
+## Dedupe (every mode)
+
+For each candidate, before proposing it, run `ts_find_related <repo> "<short distinctive phrase from the candidate>"` (output: state, id, title or file:line). Local matches by fixed string, so keep the phrase short. For matches that look implemented, confirm with a cheap code check: dispatch `task-scout` in verify mode (prompt: the candidate text, the related items with ids and states, and the repo path). Then show every match in the proposal with its id, state (open, closed, archived, or looks implemented) and a one-line reason, and ask per match: skip the candidate, reopen the closed item, link the candidate to it as a follow-up, or create it anyway. Never drop a candidate silently. Candidates with no matches proceed as normal.
+
 Announce each phase to me in one line before starting it.
 
 ## Phase 1: locate memory
