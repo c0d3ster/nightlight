@@ -41,3 +41,14 @@ Branch: overnight/2026-10-20/r2-04-t16-task-source-github
 - `ts_find_related` prints `<open|closed>\t#<n>\t<title>` from `gh issue list --state all --search`.
 - `build_task_prompt` gets a github-mode paragraph (gated on `TASK_SOURCE == github`): issue number, `gh issue view <n> --comments [--repo ...]`, backtick `#<n>` in the PR body, no `Closes`, no status labels. Local prompts unchanged.
 - Deviation: `load_task_source` no longer errors on a missing `github.repo`; the module falls back to `gh repo view` on the target's origin (per the task). Tested with a stubbed `gh` only, not a live repo.
+
+## #17 Route `plan.sh` / `discover.sh` eligibility through the task-source module
+
+Branch: overnight/2026-10-20/r2-05-t17-plan-eligibility-task-source
+
+- Moved `load_task_source` out of `overnight.sh` into new `lib/task-source.sh` (verbatim); `overnight.sh` and `plan.sh` both source it (cwd is the nightlight checkout in both).
+- `plan.sh` no-arg mode now calls `load_task_source` then `ts_is_eligible` per repo instead of the inline grep. The "no TASKS.md" skip applies to local only. A repo whose source fails to load (bad meta, unimplemented linear) is skipped with "task source unavailable".
+- `plan.sh` now checks for `jq` like `overnight.sh`.
+- `discover.sh` unchanged (no gate in no-arg mode, per the task).
+- Tested with temp repos and stubbed `gh`/`claude`: local open/closed/missing TASKS.md and a github repo with no issues. No live GitHub test.
+- Deviation: none.
