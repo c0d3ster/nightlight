@@ -18,3 +18,26 @@ Branch: overnight/2026-10-20/r2-02-t14-generalize-task-result-ids
 - `run_repo()` errors (returns 1) right after sourcing the module when `--stop-after` is set and `TS_NUMERIC_IDS != 1`. The `-gt` comparison in the loop is unchanged and is the only numeric use of the id.
 - Not done: `record_task_entry` still passes `--argjson num` and `docs/stats-schema.json` still says `taskNumber` is an integer, so a non-numeric source will need that relaxed when one is added.
 - Deviation: none.
+
+## #15 Read `taskSource` config and select the module in `run_repo()`
+
+Branch: overnight/2026-10-20/r2-03-t15-task-source-config
+
+- New `load_task_source(repo_path)` in `overnight.sh`, called first thing in `run_repo()` in place of the hardcoded `source lib/task-source-local.sh`. It reads `docs/nightlight-meta.json` from the target repo's working tree (before the default-branch checkout/pull, so it sees whatever is on disk).
+- Sets globals `TASK_SOURCE`, `TS_GITHUB_REPO`, `TS_LINEAR_TEAM_ID`, `TS_LABELS_JSON` (raw optional `labels` object, `{}` if absent). Only the chosen source's block is read; a missing `github.repo` / `linear.teamId` errors.
+- Missing file or field means `local`. Invalid JSON, unknown `taskSource`, or a missing `lib/task-source-<name>.sh` (github and linear until later tasks add them) return 1 with a clear message.
+- The "no TASKS.md" skip in `run_repo()` now applies only to `local`; other sources go straight to `ts_is_eligible`.
+- Not done: nothing consumes the `TS_*` config vars yet; the github/linear modules are future tasks.
+- Deviation: none.
+
+## #16 Add `lib/task-source-github.sh`
+
+Branch: overnight/2026-10-20/r2-04-t16-task-source-github
+
+- New `lib/task-source-github.sh` implementing `TS_NUMERIC_IDS=1`, `ts_is_eligible`, `ts_list_tasks`, `ts_task_result_label`, `ts_task_result_re`, `ts_find_related`.
+- One fetch per run: `ts_is_eligible` runs `gh issue list` once per section label, merges (dedupes by number), drops `nl:blocked`/`nl:needs-human`, sorts by number, and caches the result in a temp file (`TS_GH_CACHE`). `ts_list_tasks` reads that cache (fetching only if `ts_is_eligible` wasn't called first). Re-sourcing the module per repo resets the cache.
+- Block file per issue: `- [ ] #<n> [stack: <x>] <title>`, blank line, body, then comments with `authorAssociation` OWNER/MEMBER/COLLABORATOR only (`### Comment by <login>`). Issue body is included as-is (the section label is the gate). Stack from the `stackPrefix` label, else previous task's stack, else solo.
+- Label names honor the `labels` config block (`agentReady`, `verify`, `research`, `blocked`, `needsHuman`, `stackPrefix`) via `TS_LABELS_JSON`.
+- `ts_find_related` prints `<open|closed>\t#<n>\t<title>` from `gh issue list --state all --search`.
+- `build_task_prompt` gets a github-mode paragraph (gated on `TASK_SOURCE == github`): issue number, `gh issue view <n> --comments [--repo ...]`, backtick `#<n>` in the PR body, no `Closes`, no status labels. Local prompts unchanged.
+- Deviation: `load_task_source` no longer errors on a missing `github.repo`; the module falls back to `gh repo view` on the target's origin (per the task). Tested with a stubbed `gh` only, not a live repo.
