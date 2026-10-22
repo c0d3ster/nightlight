@@ -645,7 +645,7 @@ dispatch() {
       -p \
       2>>"$errlog" \
       | tee "$DISPATCH_TMP_RAW" \
-      | jq -r -f format-stream.jq \
+      | jq --unbuffered -r -f format-stream.jq \
       | tee -a "$readable_log" "$run_log"
     claude_status="${PIPESTATUS[1]}"
 
