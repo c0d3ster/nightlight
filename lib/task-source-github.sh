@@ -40,7 +40,7 @@ ts_gh_fetch() {
   local label
   for label in "${sections[@]}"; do
     gh issue list --repo "$TS_GITHUB_REPO" --state open --label "$label" --limit 200 \
-      --json number,title,body,labels,author,authorAssociation,comments,createdAt >> "$raw" \
+      --json number,title,body,labels,author,comments,createdAt >> "$raw" \
       || { echo "error: gh issue list failed for label $label" >&2; rm -f "$raw"; return 1; }
   done
 
