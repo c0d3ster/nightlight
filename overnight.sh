@@ -571,7 +571,7 @@ Treat the TASK_RESULT lines above as a starting point, not ground truth -- a tas
 - PR open, not merged: leave the issue open; no label change unless it reported needs-human.
 - Reported blocked (no PR): add the $blocked label and comment the reason from the note.
 - Reported needs-human: add the $needs_human label and comment the exact steps (from the task PR description), then leave it open.
-Never close an issue whose PR has not merged, and never use a closing keyword to do it.
+Never close an issue whose PR has not merged, and never use a closing keyword to do it. gh rejects labels that don't exist, so before adding $blocked or $needs_human, create it if the repo lacks it (gh label create <name>$repo_flag).
 
 Also check every open issue already labeled $needs_human, not just ones reported this run: find its linked PR (the task PR body references the issue as a backticked number; use gh pr list --state all --search or the issue's comments). If that PR merged, close the issue as completed with a PR-link comment and remove the label. If still open, leave it.
 
