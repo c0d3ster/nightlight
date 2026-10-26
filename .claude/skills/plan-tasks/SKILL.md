@@ -21,7 +21,7 @@ Per attached repo, read `taskSource` from its `docs/nightlight-meta.json` (missi
   - Items: the open issues labeled `nl:discovered` (`gh issue list --label nl:discovered --state open`), plus any open `nl:*`-sectioned issues I name. An item's text is the issue title and body, its id is the issue number.
   - Investigate: unchanged. The prompt is the issue's text and number plus the repo path; the agent needs no source-specific logic.
   - Synthesize step 2 (assign `#<n>`): skipped, the issue number is the id. Stack names are still per repo.
-  - Synthesize write: after approval, apply labels with `gh issue edit <n> --add-label <section>,nl:stack:<name> --remove-label nl:discovered` (labels come from the repo's `labels` block, defaults `nl:agent-ready`/`nl:verify`/`nl:research`/`nl:decision`, stack prefix `nl:stack:`). Breakdowns go in as an issue comment (`gh issue comment`). Position: issue number is the order, so skip the position question.
+  - Synthesize write: after approval, create any missing section or `nl:stack:<name>` label (`gh` rejects labels that don't exist: `gh label create <name> --repo <repo>`), then apply labels with `gh issue edit <n> --add-label <section>,nl:stack:<name> --remove-label nl:discovered` (labels come from the repo's `labels` block, defaults `nl:agent-ready`/`nl:verify`/`nl:research`/`nl:decision`, stack prefix `nl:stack:`). Breakdowns go in as an issue comment (`gh issue comment`). Position: issue number is the order, so skip the position question.
   - Finalize: skipped entirely. The write landed on approval; report the issue URLs instead.
 
 ## Dedupe (every mode)
