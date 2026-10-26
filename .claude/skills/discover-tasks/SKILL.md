@@ -23,7 +23,7 @@ Per repo (in multi-repo mode, each subdirectory), read `taskSource` from its `do
 - `local`: Phases 1-4 apply exactly as written.
 - `github` (remote): never edit TASKS.md, delete nothing from TASKS.md, and open no chore PR for this repo. Deltas:
   - Phase 2 step 2: dedupe through the Dedupe section below instead of TASKS.md and `docs/tasks-archive/`.
-  - Phase 3: for each approved candidate run `gh issue create --repo <github.repo or origin> --title "<task text>" --body "<rationale, source>" --label nl:discovered` (label name from the repo's `labels.discovered` if set). Memory-sourced items still get their source memory file and MEMORY.md line deleted (step 3), but that is a local memory edit, not a commit. Announce "Done - N issue(s) created, N memory file(s) cleared."
+  - Phase 3: after approval, create `nl:discovered` if the repo lacks it (`gh` rejects labels that don't exist: `gh label create nl:discovered --repo <repo>`), then for each approved candidate run `gh issue create --repo <github.repo or origin> --title "<task text>" --body "<rationale, source>" --label nl:discovered` (label name from the repo's `labels.discovered` if set). Memory-sourced items still get their source memory file and MEMORY.md line deleted (step 3), but that is a local memory edit, not a commit. Announce "Done - N issue(s) created, N memory file(s) cleared."
   - Phase 4: skipped entirely. Report the created issue URLs instead.
 
 ## Dedupe (every mode)
