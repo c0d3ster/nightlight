@@ -111,3 +111,5 @@ This is nightlight working on itself: the target repo for these tasks is the nig
 
 ## Discovered
 
+- Map non-solo stacks to GitHub milestones in remote (github) mode: add optional `ts_ensure_group(stack, description)` / `ts_close_group(stack)` to the task-source contract (local no-op), have `/plan-tasks` create the milestone from the PRD phase goal and set it on each issue, have housekeeping close it when the stack is finished (reopen on resume), and add a narrow `gh api repos/*/milestones*` allow entry. The `nl:stack:<name>` label stays authoritative for dispatch. Found in design discussion on `docs/plans/multi-task-source.md` (2.6) and `lib/task-source-github.sh`.
+
