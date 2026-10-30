@@ -241,7 +241,7 @@ An open issue with a section label is a task, and its number is the task id. Hou
 
 **Public repos:** issue text is untrusted input fed to an unattended agent with write tools. The section label is the gate, and applying a label needs triage or write access, so strangers can't dispatch work. Only comments from `OWNER`, `MEMBER`, and `COLLABORATOR` authors are included in the task body. Still, `taskSource: "github"` on a public repo assumes your label permissions are tight: keep triage access limited to people you trust.
 
-Permissions: `.claude/settings.json` allows only `gh issue view/list/comment/create/edit` and denies `gh issue delete` and `gh repo delete`. There is no blanket `gh` or MCP allow.
+Permissions: `.claude/settings.json` allows only `gh issue view/list/comment/create/edit/close`, `gh label list/create`, `gh pr view/list`, and deletion of `overnight/*` branches, and denies `gh issue delete` and `gh repo delete`. There is no blanket `gh` or MCP allow.
 
 ## TASKS.md format (in the target repo)
 

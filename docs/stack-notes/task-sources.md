@@ -78,7 +78,7 @@ Branch: overnight/2026-10-20/r2-07-t19-remote-housekeeping-github
 
 Branch: overnight/2026-10-20/r2-08-t20-github-mode-permissions-docs
 
-- `.claude/settings.json`: allow `gh issue view/list/comment/create/edit`, deny `gh issue delete` and `gh repo delete`. No blanket `gh` or MCP allow.
+- `.claude/settings.json`: allow `gh issue view/list/comment/create/edit/close`, `gh label list/create`, `gh pr view/list`, `git push origin --delete overnight/*` and `git branch -D overnight/*` (housekeeping needs them; the user-level `Bash(*)` on the author's machine had masked the gap), deny `gh issue delete` and `gh repo delete`. No blanket `gh` or MCP allow.
 - CLAUDE.md: new "GitHub mode" subsection inserted before "Task numbering". Existing local-mode lines untouched.
 - README: new "GitHub Issues task source (opt-in)" section before "TASKS.md format", stating local stays the default, covering `taskSource`, `github.repo`, labels, and the public-repo label-permission caveat.
 - Interfaces: none (docs and settings only).

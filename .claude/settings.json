@@ -35,6 +35,13 @@
       "Bash(gh issue comment:*)",
       "Bash(gh issue create:*)",
       "Bash(gh issue edit:*)",
+      "Bash(gh issue close:*)",
+      "Bash(gh label list:*)",
+      "Bash(gh label create:*)",
+      "Bash(gh pr view:*)",
+      "Bash(gh pr list:*)",
+      "Bash(git push origin --delete overnight/*)",
+      "Bash(git branch -D overnight/*)",
       "Bash(gh pr merge chore/tasks-discover-*:*)",
       "Bash(gh pr merge chore/tasks-plan-*:*)"
     ],
