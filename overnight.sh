@@ -353,6 +353,24 @@ find_orphan_branches() {
   done < <(git -C "$repo_path" for-each-ref --format='%(refname:short)' refs/heads/overnight refs/remotes/origin/overnight | sed 's#^origin/##' | sort -u)
 }
 
+# GitHub mode only: an issue stays open until its task PR merges, so a task
+# whose PR already exists (open, merged, or closed unmerged) must not be
+# dispatched again. Prints "<state> #<pr>" for $2's PR (open or merged ones win
+# over closed), nothing if it has none. One gh call per run, cached in
+# TASK_PR_CACHE; returns 1 if gh can't answer.
+TASK_PR_CACHE=""
+find_task_pr() {
+  local repo_path="$1" num="$2"
+  if [[ -z "$TASK_PR_CACHE" ]]; then
+    TASK_PR_CACHE="$(cd "$repo_path" && gh pr list --state all --limit 500 --json number,state,headRefName 2>/dev/null)" \
+      || { TASK_PR_CACHE=""; return 1; }
+  fi
+  jq -r --arg re "^overnight/[0-9]{4}-[0-9]{2}-[0-9]{2}/r[0-9]+-[0-9]+-t$num-" '
+    [.[] | select(.headRefName | test($re))]
+    | (map(select(.state != "CLOSED")) + map(select(.state == "CLOSED"))) | first // empty
+    | "\(.state | ascii_downcase) #\(.number)"' <<< "$TASK_PR_CACHE"
+}
+
 # Discards each orphaned branch (locally, and on origin if it was pushed) so
 # the task retries from a clean state. Prints the discarded names, one per
 # line, for the caller to hand to the retry prompt.
@@ -547,9 +565,12 @@ build_housekeeping_prompt_github() {
   local run_summary="$1" skipped_summary="$2" run="$3"
   local repo_flag=""
   [[ -n "$TS_GITHUB_REPO" ]] && repo_flag=" --repo $TS_GITHUB_REPO"
-  local blocked needs_human
+  local blocked needs_human agent_ready verify research
   blocked="$(ts_gh_label blocked nl:blocked)"
   needs_human="$(ts_gh_label needsHuman nl:needs-human)"
+  agent_ready="$(ts_gh_label agentReady nl:agent-ready)"
+  verify="$(ts_gh_label verify nl:verify)"
+  research="$(ts_gh_label research nl:research)"
   local p="A target repo has been added to this session via --add-dir. This session runs ONLY the end-of-session housekeeping step from the \"Overnight Agent Workflow\" rules in CLAUDE.md (this repo, nightlight's own) -- this run just finished dispatching one fresh session per task, so you were not present for any of them. Do not attempt any task work yourself. This is run $run of today, so name the housekeeping branch overnight/<YYYY-MM-DD>/r$run-housekeeping.
 
 This repo's backlog is GitHub Issues (taskSource \"github\"): the issues, not TASKS.md, are the task list. Do NOT create or edit TASKS.md or any docs/tasks-archive/ file, and skip the TASKS.md-specific maintenance rules in CLAUDE.md (glyphs, [/] / [!] / [x] sweeps, archiving). Task numbers below are issue numbers. Pass$repo_flag to every gh issue command.
@@ -569,11 +590,12 @@ $skipped_summary"
 Treat the TASK_RESULT lines above as a starting point, not ground truth -- a task session can misreport, so confirm each PR/branch's actual state with git/gh before changing any issue (e.g. gh pr view <pr> --json state,mergedAt, or gh pr list --head <branch> --state all). Then, per attempted task:
 - PR merged: gh issue close <n> --reason completed with a comment linking the PR, and remove any status labels ($blocked, $needs_human) that no longer apply. Wrap issue numbers in backticks in comments you write.
 - PR open, not merged: leave the issue open; no label change unless it reported needs-human.
+- Reported done with pr=none (a Verify task that found the work already exists): gh issue close <n> --reason completed with the note as the comment.
 - Reported blocked (no PR): add the $blocked label and comment the reason from the note.
 - Reported needs-human: add the $needs_human label and comment the exact steps (from the task PR description), then leave it open.
 Never close an issue whose PR has not merged, and never use a closing keyword to do it. gh rejects labels that don't exist, so before adding $blocked or $needs_human, create it if the repo lacks it (gh label create <name>$repo_flag).
 
-Also check every open issue already labeled $needs_human, not just ones reported this run: find its linked PR (the task PR body references the issue as a backticked number; use gh pr list --state all --search or the issue's comments). If that PR merged, close the issue as completed with a PR-link comment and remove the label. If still open, leave it.
+Also sweep every other open issue labeled $agent_ready, $verify or $research (this includes any also labeled $needs_human), not just ones reported this run: an earlier run's task PR may have merged since, and nothing else closes the issue. Task branches are named overnight/<date>/r<R>-<PP>-t<n>-<slug>, so find an issue's PR with gh pr list --state all --json number,state,headRefName,mergedAt$repo_flag and match -t<n>- in headRefName. If that PR merged, close the issue as completed with a PR-link comment and remove any status labels. If it is still open, or there is no PR, leave the issue alone.
 
 Also flag, never silently resolve, any open issue carrying contradictory labels (e.g. $blocked together with $needs_human, or more than one section label): comment on the issue describing the conflict and list it in the housekeeping PR body, but change no labels.
 
@@ -902,7 +924,8 @@ run_repo() {
   fi
 
   local -A stack_branch=()
-  local attempted=0 consecutive_failures=0
+  local attempted=0 pr_skipped=0 consecutive_failures=0
+  TASK_PR_CACHE=""
   local run_summary="" skipped_summary=""
   local session_calls=0 session_cost=0 session_duration=0 session_turns=0 session_cache_read=0 session_cache_creation=0 session_input=0 session_output=0
 
@@ -958,6 +981,21 @@ run_repo() {
       skipped_summary="$skipped_summary
 - #$num: out of scope this run (--limit $LIMIT reached)"
       continue
+    fi
+
+    if [[ "$TASK_SOURCE" == github ]]; then
+      local existing_pr
+      if ! existing_pr="$(find_task_pr "$repo_path" "$num")"; then
+        echo "warn: can't list PRs, skipping task #$num rather than risk a duplicate"
+        skipped_summary="$skipped_summary
+- #$num: not attempted, couldn't list PRs to check for an existing one"
+        continue
+      fi
+      if [[ -n "$existing_pr" ]]; then
+        echo "skip: task #$num already has a PR ($existing_pr)"
+        pr_skipped=$((pr_skipped+1))
+        continue
+      fi
     fi
 
     local -a orphans=()
@@ -1055,7 +1093,8 @@ $task_result"
 
   rm -rf "$blockdir"
 
-  if [[ "$attempted" -eq 0 ]]; then
+  # Tasks skipped for an existing PR still need housekeeping's merged-PR sweep.
+  if [[ "$attempted" -eq 0 && "$pr_skipped" -eq 0 ]]; then
     echo "skip: $name (every task filtered out this run, nothing to house-keep)"
     end_repo
     return 0
