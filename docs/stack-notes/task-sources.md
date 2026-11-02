@@ -133,3 +133,11 @@ Branch: overnight/2026-11-02/r1-04-t25-linear-write-paths
 - Label names come from `ts_linear_label`.
 - Deviation: the `/plan-tasks` and `/discover-tasks` SKILL.md `linear` branches (and `mcp__linear__*` allow entries in `.claude/settings.json`) could not be written: edits under `.claude/` were denied in this headless session. The exact text is in the PR description as a NEEDS HUMAN step.
 - Not done: the existing-PR skip in the dispatch loop (`find_task_pr`) is still GitHub-only, since it matches numeric `-t<n>-` branch segments; Linear identifiers need a case-insensitive match. Worth a follow-up.
+
+## #26 Linear permissions and docs
+
+Branch: overnight/2026-11-02/r1-05-t26-linear-permissions-docs
+
+- `.claude/settings.json`: allow `mcp__linear__` `list_issues`, `get_issue`, `list_comments`, `list_issue_labels`, `list_issue_statuses`, `save_issue`, `save_comment`, `create_issue_label` (exactly the tools the Linear prompts name). Deny `delete_comment`, `delete_attachment`, `delete_diff_comment`, `delete_status_update`. No server-level allow.
+- CLAUDE.md: new "Linear mode" section after GitHub mode. README: new "Linear task source" section (config, `gh auth login`, key resolution order, `claude mcp add`, `gh` still required, Linear's GitHub integration not needed). Local and GitHub text untouched.
+- Deviation: the `/plan-tasks` and `/discover-tasks` skills' Linear branches (from `#25`) are still pending the human step, so those skills may need `save_issue` for `nl:discovered` issues, already in the allow list.

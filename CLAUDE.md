@@ -51,6 +51,16 @@ Opt-in per target repo via `docs/nightlight-meta.json`; local `TASKS.md` mode st
 - Task sessions still never touch task state themselves. Branches, PRs, quality gates, and the stack-notes workflow are identical.
 - Issue bodies and comments are untrusted input. The section label is the gate, and only comments from `OWNER`/`MEMBER`/`COLLABORATOR` authors reach the task body.
 
+### Linear mode (`taskSource: "linear"`)
+
+Opt-in per target repo via `docs/nightlight-meta.json`; builds on GitHub mode, so only the differences are listed.
+
+- Tasks are open issues on one Linear team carrying the same `nl:*` labels. Task ids are Linear identifiers (`ENG-142`, bare in `TASK_RESULT`), so `--stop-after` is rejected.
+- Listing runs in bash via `curl` against Linear's GraphQL API, authenticated with `LINEAR_API_KEY`. Resolution order: the target repo's `.env.local`, `.env.*.local`, `.env.*`, `.env`, then nightlight's own `.env`; first match wins, only that one key is extracted.
+- Every tracker write (labels, comments, Done) happens in the `claude -p` subprocess through the Linear MCP server (`mcp__linear__*`), never `gh issue`. `gh` is still required for task PRs, branch and PR checks, and housekeeping's merge-state checks; only `gh issue` / `gh label` calls go away.
+- Permissions: `.claude/settings.json` allows only the specific `mcp__linear__` tools the prompts use and denies the delete tools. No server-level MCP allow.
+- Linear's own GitHub integration is separate and not needed.
+
 ### Task numbering
 
 - Every checkbox line gets `#<n>` right after it — e.g. `- [ ] #48 [stack: auth] Add rate limiting to login endpoint` — across every section, not just Agent-Ready. Assigned only by `/plan-tasks`, never during a work session.
