@@ -7,6 +7,7 @@
     "plan": "bash plan.sh",
     "discover": "bash discover.sh",
     "migrate": "bash migrate.sh",
+    "tidy": "bash tidy.sh",
     "overnight": " bash overnight.sh",
     "stats": "bash stats.sh"
   }

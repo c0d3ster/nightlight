@@ -62,7 +62,7 @@ Uncommitted content in the target repo's working tree is dangerous — lost work
 6. Commit as `chore(tasks): number and stack N task(s)`, body listing the task numbers and stack names assigned.
 7. Push, open a PR (`gh pr create`) targeting the default branch — title matches the commit, body summarizes the assignments.
 8. Report the PR URL.
-9. Merge it: `gh pr merge <branch-name> --squash --delete-branch`, using the exact branch name from step 4 (not a PR number — that's what the scoped `chore/tasks-plan-*` merge permission matches against). This is safe specifically because the breakdown/numbering/stacking going in was already explicitly approved by me in Synthesize — the merge completes something already signed off on, it doesn't approve anything new.
+9. Merge it: `gh pr merge <branch-name> --rebase --delete-branch`, using the exact branch name from step 4 (not a PR number — that's what the scoped `chore/tasks-plan-*` merge permission matches against). This is safe specifically because the breakdown/numbering/stacking going in was already explicitly approved by me in Synthesize — the merge completes something already signed off on, it doesn't approve anything new.
 10. Merge command fails (e.g. branch protection requires a review)? Report the failure plainly and leave the PR open. Don't retry, don't force, don't fall back to raw `git merge` — that stays denied regardless.
 11. Merge succeeds: `git -C <repo> checkout` the default branch and pull latest, so the working tree's TASKS.md reflects the merge before this repo's finalize is done — that's what lets a later `overnight.sh` run see the numbering/stacking without anyone merging by hand.
 

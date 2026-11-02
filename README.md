@@ -43,7 +43,7 @@ This `.env` only ever holds `PROJECT_REPOS_DIR` — a path, not a secret — and
 3. Edit `CLAUDE.md` here if you want to change the workflow rules (branching scheme, quality gates, how research tasks work, etc.) — the defaults are a reasonable starting point.
 4. Edit `.claude/settings.json` to match your actual test/lint/build commands (defaults assume npm/pnpm).
 5. In each target repo, add a `TASKS.md` with your work queue and confirm `CLAUDE.md` has a test command and conventions documented. That's the only setup required in the target repo itself.
-6. `chmod +x overnight.sh plan.sh discover.sh migrate.sh nightlight.sh stats.sh`. No `pnpm install` needed — `package.json` has no dependencies, it's just script aliases.
+6. `chmod +x overnight.sh plan.sh discover.sh migrate.sh tidy.sh nightlight.sh stats.sh`. No `pnpm install` needed — `package.json` has no dependencies, it's just script aliases.
 
 ## nightlight.sh
 
@@ -157,6 +157,7 @@ pnpm nightlight [repo] [--scan] [overnight flags]  # ./nightlight.sh [repo] [--s
 pnpm discover [repo] [--scan]                       # ./discover.sh [repo] [--scan]
 pnpm plan [repo]                                     # ./plan.sh [repo]
 pnpm migrate <repo> --to github                      # ./migrate.sh <repo> --to github
+pnpm tidy <repo> [--labels | --no-labels]            # ./tidy.sh <repo> [--labels | --no-labels]
 pnpm overnight some-repo                             # ./overnight.sh some-repo
 pnpm stats [some-repo]                               # ./stats.sh [some-repo]
 ```
@@ -284,7 +285,7 @@ Merge stacks bottom-up. Merge solos and housekeeping whenever.
 
 No `--dangerously-skip-permissions`. `.claude/settings.json` is an explicit allowlist (test/lint/build commands, safe git operations, PR creation) plus an explicit denylist (`main`/`master` push, merge, `rm -rf`, `.env` reads, `--no-verify`). The agent can't merge its own work or push to a protected branch — everything it produces is a PR waiting for you to look at it. If a task needs judgment or credentials it doesn't have, it's supposed to stop and annotate rather than guess.
 
-**One narrow, deliberate exception:** `/discover-tasks` and `/plan-tasks` Finalize each merge their own PR (`gh pr merge --squash --delete-branch`) once it's open, rather than leaving it for you to merge by hand. This isn't the agent deciding what's safe to land — every item going into that PR was already explicitly approved by you earlier in that same session (candidate-by-candidate in discover's Phase 2, or the full breakdown/numbering/stacking proposal in plan's Synthesize). The merge just completes something you already signed off on. It's scoped tightly on purpose: `.claude/settings.json` only allows `gh pr merge` for branches matching `chore/tasks-discover-*` / `chore/tasks-plan-*` — raw `git merge` stays denied everywhere, for every branch, no exceptions — and those branches only ever touch `TASKS.md`/`docs/nightlight-meta.json`, never application code. `overnight.sh`'s task PRs and its end-of-session housekeeping PR are untouched by this — those still always wait for you, exactly as before.
+**One narrow, deliberate exception:** `/discover-tasks` and `/plan-tasks` Finalize each merge their own PR (`gh pr merge --rebase --delete-branch`) once it's open, rather than leaving it for you to merge by hand. This isn't the agent deciding what's safe to land — every item going into that PR was already explicitly approved by you earlier in that same session (candidate-by-candidate in discover's Phase 2, or the full breakdown/numbering/stacking proposal in plan's Synthesize). The merge just completes something you already signed off on. It's scoped tightly on purpose: `.claude/settings.json` only allows `gh pr merge` for branches matching `chore/tasks-discover-*` / `chore/tasks-plan-*` — raw `git merge` stays denied everywhere, for every branch, no exceptions — and those branches only ever touch `TASKS.md`/`docs/nightlight-meta.json`, never application code. `overnight.sh`'s task PRs and its end-of-session housekeeping PR are untouched by this — those still always wait for you, exactly as before.
 
 ## Prior art
 
