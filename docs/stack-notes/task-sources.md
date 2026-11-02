@@ -134,3 +134,10 @@ Branch: overnight/2026-11-02/r1-04-t25-linear-write-paths
 - Added `linear` branches to the `/plan-tasks` and `/discover-tasks` skills (Task source mode): items and writes go through `list_issues`, `save_issue`, `save_comment`, `create_issue_label`, `list_issue_labels`, `list_issue_statuses`; `save_issue` replaces the label list, so callers resend kept labels. The `mcp__linear__*` allow entries landed separately in PR #89.
 - The dispatch loop's existing-PR skip (`find_task_pr`) now covers `linear` as well as `github`, and both it and `find_orphan_branches` match the task id case-insensitively, because a session may lowercase `ENG-142` in its branch name. Without it a Linear task whose PR was still open would be re-dispatched on the next run.
 - Verified by hand with a stubbed `gh`: open, merged and closed PR lookup, a lowercased branch, and prefix ids (`ENG-14` does not match `ENG-142` or `ENG-1420`).
+
+## #26 Linear permissions and docs
+
+Branch: overnight/2026-11-02/r1-05-t26-linear-permissions-docs
+
+- `.claude/settings.json`: allow `mcp__linear__` `list_issues`, `get_issue`, `list_comments`, `list_issue_labels`, `list_issue_statuses`, `save_issue`, `save_comment`, `create_issue_label` (exactly the tools the Linear prompts name). Deny `delete_comment`, `delete_attachment`, `delete_diff_comment`, `delete_status_update`. No server-level allow.
+- CLAUDE.md: new "Linear mode" section after GitHub mode. README: new "Linear task source" section (config, `gh auth login`, key resolution order, `claude mcp add`, `gh` still required, Linear's GitHub integration not needed). Local and GitHub text untouched.
