@@ -103,3 +103,12 @@ Branch: overnight/2026-11-02/r2-01-t22-linear-mcp-gate
 - Findings: no delete tools exist in the server, so the `delete_*` deny entries are dead; `save_issue` is create-or-edit; `--allowedTools` swallows a positional prompt (use stdin); settings emit `git -C * ...:*` rule warnings.
 - Recommendation: `whoami` preflight in `overnight.sh` for Linear mode; allow `save_project`/`save_milestone` only when needed.
 - Deviation: none; docs only.
+
+## #23 Linear: `.mcp.json` and `LINEAR_API_KEY` resolver
+
+Branch: overnight/2026-11-02/r1-02-t23-linear-mcp-json-key-resolver
+
+- Added `lib/linear-key.sh` with `resolve_linear_key <repo_path>`: greps only `^LINEAR_API_KEY=` (never sources) from `.env.local`, `.env.*.local`, `.env.*`, `.env` in the target, then nightlight's `.env`. First match wins; strips quotes and CR. Exports `LINEAR_API_KEY`; warns when the source file is tracked (`git ls-files --error-unmatch`); returns 1 with an error if none found.
+- `lib/task-source.sh` sources it and calls it in the `linear` branch of `load_task_source`, before the module check. The agent-side `Read(.env)` / `Read(.env.*)` deny is untouched.
+- Deviation: `.mcp.json` was NOT created. The harness blocked writes to it as a sensitive file. Needs human: create `.mcp.json` at the repo root with `{"mcpServers":{"linear":{"type":"http","url":"https://mcp.linear.app/mcp"}}}`.
+- Deviation: behavioral tests of the resolver were denied in the session; only `bash -n` syntax checks ran.
