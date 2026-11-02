@@ -141,3 +141,11 @@ Branch: overnight/2026-11-02/r1-05-t26-linear-permissions-docs
 
 - `.claude/settings.json`: the narrow Linear allow entries and the `delete_*` denies landed separately in PR #89 (a superset: `whoami`, `list_teams`, `get_team`, `list_projects`, `list_milestones` were added for the preflight and milestone work), so this PR has no settings change.
 - CLAUDE.md: new "Linear mode" section after GitHub mode. README: new "Linear task source" section (config, `gh auth login`, key resolution order, `claude mcp add`, `gh` still required, Linear's GitHub integration not needed). Local and GitHub text untouched.
+
+## #33 `pnpm migrate <repo> --to linear`
+
+Branch: overnight/2026-11-02/r1-06-t33-migrate-to-linear
+
+- `migrate.sh` accepts `--to github|linear`, rejects anything else, and passes `--to $TO` to `/migrate-tasks`. README script list updated.
+- `/migrate-tasks` SKILL.md: GitHub text untouched except the args line; new "Linear mode" section at the end (dedupe via `ts_find_related` + marker, MCP `save_issue`/`create_issue_label`, Phase 3 skipped, Phase 4 flips `taskSource` + `linear.teamId`).
+- Deviation: the live run `pnpm migrate c0d3ster --to linear` is a human step (creates real Linear issues); not run here. No permission changes needed.

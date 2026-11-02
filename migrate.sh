@@ -23,12 +23,12 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-[[ -n "$REPO" ]] || { echo "usage: pnpm migrate <repo> --to github"; exit 1; }
-[[ "$TO" == "github" ]] || { echo "only --to github is supported (local to GitHub, one direction)"; exit 1; }
+[[ -n "$REPO" ]] || { echo "usage: pnpm migrate <repo> --to github|linear"; exit 1; }
+[[ "$TO" == "github" || "$TO" == "linear" ]] || { echo "--to must be github or linear (local to remote, one direction)"; exit 1; }
 
 # same repo resolution as plan.sh / discover.sh
 [[ "$REPO" != "$(basename "$PWD")" ]] || REPO="."
 [[ -d "$REPO" ]] || REPO="$PROJECT_REPOS_DIR/$REPO"
 REPO="$(cd "$REPO" && pwd -W)"
 
-MSYS_NO_PATHCONV=1 claude "/migrate-tasks --to github" --add-dir "$REPO"
+MSYS_NO_PATHCONV=1 claude "/migrate-tasks --to $TO" --add-dir "$REPO"
