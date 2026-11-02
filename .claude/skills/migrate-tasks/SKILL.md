@@ -1,6 +1,6 @@
 ---
 name: migrate-tasks
-description: Moves a target repo's open TASKS.md items into GitHub issues (local to GitHub only), reviews its unlabeled existing issues for staleness, then flips taskSource to github. Every create, close, and relabel needs per-item approval.
+description: Moves a target repo's open TASKS.md items into GitHub issues (local to GitHub only), reviews its unlabeled existing issues for staleness, then flips taskSource to github. A repo already on github with no open TASKS.md items gets only the issue review (adopt mode). Every create, close, and relabel needs per-item approval.
 disable-model-invocation: true
 ---
 
@@ -8,9 +8,9 @@ A target repo is attached via --add-dir; args are `--to github` (the only suppor
 
 ## Setup
 
-1. Read the repo's `docs/nightlight-meta.json`. Open items (`- [ ]`, `- [!]`, `- [/]`) in TASKS.md decide whether migration is needed, not the flag: `taskSource` can be set to `github` by hand or by an earlier step without the backlog having moved. `taskSource` already `github` and no open items: stop and say so. `taskSource` already `github` with open items: partial migration, run every phase and skip only the `taskSource` flip in Phase 4 step 5. Otherwise, missing TASKS.md or no open items: skip phases 1-2 and go to phase 3.
+1. Read the repo's `docs/nightlight-meta.json`. Open items (`- [ ]`, `- [!]`, `- [/]`) in TASKS.md decide whether migration is needed, not the flag: `taskSource` can be set to `github` by hand or by an earlier step without the backlog having moved. `taskSource` already `github` and no open items: adopt mode, which is Phase 3 only (review the repo's existing unlabeled issues). Skip phases 1, 2 and 4 and step 3 below, since nothing is written to the repo's files. `taskSource` already `github` with open items: partial migration, run every phase and skip only the `taskSource` flip in Phase 4 step 5. Otherwise, missing TASKS.md or no open items: skip phases 1-2 and go to phase 3.
 2. Resolve the issue repo: `github.repo` from the meta file, else origin (`gh repo view --json nameWithOwner`). Load the module from the nightlight checkout: `source lib/task-source.sh`, then set `TS_GITHUB_REPO` and use `ts_find_related` and `ts_gh_label` from `lib/task-source-github.sh` (source it directly; the meta file may not be `github` yet). Label names come from `ts_gh_label` (defaults `nl:agent-ready`, `nl:verify`, `nl:research`, `nl:blocked`, `nl:needs-human`, `nl:stack:<name>`), honoring any `labels` overrides.
-3. Check the target repo is on its default branch with a clean tree before anything else; if not, stop and tell me.
+3. Check the target repo is on its default branch with a clean tree before anything else; if not, stop and tell me. (Not needed in adopt mode.)
 
 ## Phase 1: dedupe
 
