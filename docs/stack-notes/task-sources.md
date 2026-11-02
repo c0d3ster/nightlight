@@ -112,3 +112,14 @@ Branch: overnight/2026-11-02/r1-02-t23-linear-mcp-json-key-resolver
 - `lib/task-source.sh` sources it and, in the `linear` branch of `load_task_source`, runs `env_get LINEAR_API_KEY <target> .` (target repo first, then nightlight's own dir) and exports the result; it errors if none is found. The agent-side `Read(.env)` / `Read(.env.*)` deny is untouched.
 - Deviation: `.mcp.json` was NOT created. The harness blocked writes to it as a sensitive file. Needs human: create `.mcp.json` at the repo root with `{"mcpServers":{"linear":{"type":"http","url":"https://mcp.linear.app/mcp"}}}`.
 - Verified by hand in scratch repos: key in an ignored `.env.local`, template-only (rejected), tracked-only (warns), nightlight fallback, and absent (error).
+
+## #24 Add `lib/task-source-linear.sh`
+
+Branch: overnight/2026-11-02/r1-03-t24-linear-task-source-module
+
+- Added `lib/task-source-linear.sh` implementing the `ts_*` contract with `TS_NUMERIC_IDS=0`. Same record shape as the other modules (`<id>\t<stack>\t<blockfile>`); ids are Linear identifiers, `ts_task_result_re` matches the bare identifier (`^TASK_RESULT: ENG-142 `).
+- One GraphQL query (paged, 100 per page) feeds `ts_is_eligible` and `ts_list_tasks` via a per-run cache file. Filter: team (key, or UUID auto-detected), state type not completed/canceled, any section label. Drops `nl:blocked` / `nl:needs-human` client-side; order is `createdAt`. Stack comes from `nl:stack:*`, inheriting the previous task's, else `solo`.
+- `ts_find_related` queries open and closed issues by case-insensitive title/description match, prints `open|closed\t<id>\t<title>`.
+- Auth header is the raw key (Linear personal keys take no `Bearer`). `TS_LINEAR_URL` is overridable for tests.
+- `--stop-after` error already comes from `run_repo()` checking `TS_NUMERIC_IDS != 1`; no change needed there.
+- Deviation: comments are all included (Linear has no author-association field; only workspace members can comment). Tested only against a mocked `curl`, never live.
