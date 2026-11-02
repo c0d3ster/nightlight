@@ -1,6 +1,6 @@
 ---
 name: migrate-tasks
-description: Moves a target repo's open TASKS.md items into GitHub issues (local to GitHub only), reviews its unlabeled existing issues for staleness, then flips taskSource to github. A repo already on github with no open TASKS.md items gets only the issue review (adopt mode). Every create, close, and relabel needs per-item approval.
+description: Moves a target repo's open TASKS.md items into GitHub issues (local to GitHub only), reviews its unlabeled existing issues for staleness, then flips taskSource to github. The issue review is shared with `/tidy-issues` (`pnpm tidy`). Every create, close, and relabel needs per-item approval.
 disable-model-invocation: true
 ---
 
@@ -8,9 +8,9 @@ A target repo is attached via --add-dir; args are `--to github` (the only suppor
 
 ## Setup
 
-1. Read the repo's `docs/nightlight-meta.json`. Open items (`- [ ]`, `- [!]`, `- [/]`) in TASKS.md decide whether migration is needed, not the flag: `taskSource` can be set to `github` by hand or by an earlier step without the backlog having moved. `taskSource` already `github` and no open items: adopt mode, which is Phase 3 only (review the repo's existing unlabeled issues). Skip phases 1, 2 and 4 and step 3 below, since nothing is written to the repo's files. `taskSource` already `github` with open items: partial migration, run every phase and skip only the `taskSource` flip in Phase 4 step 5. Otherwise, missing TASKS.md or no open items: skip phases 1-2 and go to phase 3.
+1. Read the repo's `docs/nightlight-meta.json`. Open items (`- [ ]`, `- [!]`, `- [/]`) in TASKS.md decide whether migration is needed, not the flag: `taskSource` can be set to `github` by hand or by an earlier step without the backlog having moved. `taskSource` already `github` and no open items: nothing to migrate. Stop, and tell me `pnpm tidy <repo>` reviews the repo's existing unlabeled issues. `taskSource` already `github` with open items: partial migration, run every phase and skip only the `taskSource` flip in Phase 4 step 5. Otherwise, missing TASKS.md or no open items: skip phases 1-2 and go to phase 3.
 2. Resolve the issue repo: `github.repo` from the meta file, else origin (`gh repo view --json nameWithOwner`). Load the module from the nightlight checkout: `source lib/task-source.sh`, then set `TS_GITHUB_REPO` and use `ts_find_related` and `ts_gh_label` from `lib/task-source-github.sh` (source it directly; the meta file may not be `github` yet). Label names come from `ts_gh_label` (defaults `nl:agent-ready`, `nl:verify`, `nl:research`, `nl:blocked`, `nl:needs-human`, `nl:stack:<name>`), honoring any `labels` overrides.
-3. Check the target repo is on its default branch with a clean tree before anything else; if not, stop and tell me. (Not needed in adopt mode.)
+3. Check the target repo is on its default branch with a clean tree before anything else; if not, stop and tell me.
 
 ## Phase 1: dedupe
 
@@ -32,10 +32,7 @@ A target repo is attached via --add-dir; args are `--to github` (the only suppor
 
 ## Phase 3: review existing unlabeled issues
 
-1. `gh issue list --repo <repo> --state open --json number,title,labels,body,updatedAt`, keep issues with no `nl:*` label (exclude those just created).
-2. Gate before any scouting: show the count and each issue's number and title, then ask whether to review them: all, only the numbers I name, or skip. No answer means skip. Skip ends this phase (and the whole session in adopt mode) with nothing dispatched or changed.
-3. Per issue I chose, dispatch `task-scout` in verify mode (foreground, batched in one message, ~8 at a time) with the issue text and repo path, plus `git log` since the issue's `updatedAt` for recent merges.
-4. Propose per issue: label into a section (and stack), close as stale (with the comment text shown), or leave. Apply only what I approve per item: `gh issue edit --add-label`, or `gh issue comment` then `gh issue close --reason "not planned"`. Never delete.
+Read `.claude/skills/tidy-issues/SKILL.md` in the nightlight checkout and follow its steps with labels on (`--labels`), since this repo is moving to the GitHub source. Exclude the issues Phase 2 just created. The gate in its step 3 applies: I can skip the review entirely.
 
 ## Phase 4: flip the source
 
@@ -47,6 +44,6 @@ Only after every open TASKS.md item is an issue, was archived as done, or was ex
 4. Move, never delete: write a NEW `docs/tasks-archive/<YYYY-MM-DD>-migrated.md` holding every open TASKS.md item verbatim with its issue number, "skipped by human", or "already done" with its merged PR numbers and scout's one-line finding, then remove those items from TASKS.md (leave Decisions and Discovered content in place).
 5. Set `"taskSource": "github"` in `docs/nightlight-meta.json`, unless it is already set (create the file with `nextTaskNumber: 1, tasksCompleted: 0, tasksBlocked: 0` if missing, keep existing counters), plus `"github": {"repo": "<owner/name>"}` only if the backlog lives somewhere other than origin.
 6. Stage only those files. Commit `chore(tasks): migrate TASKS.md to GitHub issues`, push, `gh pr create` to the default branch, report the URL.
-7. Merge with `gh pr merge <branch-name> --squash --delete-branch` (exact branch name, matching the scoped permission), safe because everything in it was approved above. Failure: report and leave the PR open. On success check out the default branch and pull.
+7. Merge with `gh pr merge <branch-name> --rebase --delete-branch` (exact branch name, matching the scoped permission), safe because everything in it was approved above. Failure: report and leave the PR open. On success check out the default branch and pull.
 
 Do not implement any code in this session.
