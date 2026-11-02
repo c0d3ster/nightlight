@@ -16,7 +16,12 @@ A target repo is attached via --add-dir; args are `--to github` (the only suppor
 
 1. List open TASKS.md items (all sections except Decisions and Discovered, which are never migrated; mention them as left behind). Each has `#<n>`, section, stack, text, glyph.
 2. Per item run `ts_find_related <repo> "<short distinctive phrase>"` (open and closed issues). Also search for `Migrated from TASKS.md #<n>` so a prior migration run matches (idempotency). For matches that look implemented, dispatch `task-scout` in verify mode (item text, related issues with state, repo path).
-3. Show each item with its matches (number, state, one-line reason) and ask per match: skip (already tracked), link (create, referencing the match), or create anyway. Items with no matches proceed. An item I skip is recorded as explicitly skipped.
+3. Per item, whether or not it has an issue match, also check whether the work already shipped, since an item tracked only in TASKS.md has no issue to find. Item numbers are permanent, so the task branch name `overnight/<date>/r<R>-<PP>-t<NN>-<slug>` is the signal:
+   - Merged PRs: `gh pr list --repo <repo> --state merged --limit 300 --json number,title,headRefName,mergedAt --jq '.[] | select(.headRefName | test("-t<NN>-"))'`. Fetch the list once and filter it per item rather than calling `gh` per item.
+   - Open or closed-unmerged PRs: the same query with `--state open` and `--state closed`. A PR that is open means in flight, not done.
+   - Branches: `git -C <repo> branch -a --list '*-t<NN>-*'` for attempts with no PR yet.
+   - Any merged PR hit: dispatch `task-scout` in verify mode (item text, the PR numbers, repo path) to confirm the acceptance criteria are on the default branch. Do this only for hits, not for every item.
+4. Show each item with its matches (number, state, one-line reason) and ask per match: skip (already tracked), link (create, referencing the match), or create anyway. For an item whose work already shipped, show the merged PR numbers and scout's finding, and offer **archive as done** (default: no issue is created, Phase 4 records it with its PR numbers), or create anyway (for follow-up work scout flagged as missing). Open or unmerged PRs and bare branches are shown as in flight, and I decide whether to skip or create. Items with no matches of any kind proceed. An item I skip is recorded as explicitly skipped.
 
 ## Phase 2: create issues
 
@@ -33,12 +38,12 @@ A target repo is attached via --add-dir; args are `--to github` (the only suppor
 
 ## Phase 4: flip the source
 
-Only after every open TASKS.md item is an issue or was explicitly skipped by me, and phases 2-3 completed without error:
+Only after every open TASKS.md item is an issue, was archived as done, or was explicitly skipped by me, and phases 2-3 completed without error:
 
 1. Confirm I want to flip and PR. Don't proceed without an explicit yes.
 2. Resolve the default branch (`git -C <repo> symbolic-ref --quiet --short refs/remotes/origin/HEAD`, fall back to `main` then `master`); not on it: stop, leave edits uncommitted, tell me.
 3. Pull, branch off as `chore/tasks-migrate-<YYYY-MM-DD>` (append `-2`, `-3`... if taken).
-4. Move, never delete: write a NEW `docs/tasks-archive/<YYYY-MM-DD>-migrated.md` holding every open TASKS.md item verbatim with its issue number or "skipped by human", then remove those items from TASKS.md (leave Decisions and Discovered content in place).
+4. Move, never delete: write a NEW `docs/tasks-archive/<YYYY-MM-DD>-migrated.md` holding every open TASKS.md item verbatim with its issue number, "skipped by human", or "already done" with its merged PR numbers and scout's one-line finding, then remove those items from TASKS.md (leave Decisions and Discovered content in place).
 5. Set `"taskSource": "github"` in `docs/nightlight-meta.json` (create the file with `nextTaskNumber: 1, tasksCompleted: 0, tasksBlocked: 0` if missing, keep existing counters), plus `"github": {"repo": "<owner/name>"}` only if the backlog lives somewhere other than origin.
 6. Stage only those files. Commit `chore(tasks): migrate TASKS.md to GitHub issues`, push, `gh pr create` to the default branch, report the URL.
 7. Merge with `gh pr merge <branch-name> --squash --delete-branch` (exact branch name, matching the scoped permission), safe because everything in it was approved above. Failure: report and leave the PR open. On success check out the default branch and pull.
