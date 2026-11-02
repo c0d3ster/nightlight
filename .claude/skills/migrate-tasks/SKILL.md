@@ -33,8 +33,9 @@ A target repo is attached via --add-dir; args are `--to github` (the only suppor
 ## Phase 3: review existing unlabeled issues
 
 1. `gh issue list --repo <repo> --state open --json number,title,labels,body,updatedAt`, keep issues with no `nl:*` label (exclude those just created).
-2. Per issue, dispatch `task-scout` in verify mode (foreground, batched in one message, ~8 at a time) with the issue text and repo path, plus `git log` since the issue's `updatedAt` for recent merges.
-3. Propose per issue: label into a section (and stack), close as stale (with the comment text shown), or leave. Apply only what I approve per item: `gh issue edit --add-label`, or `gh issue comment` then `gh issue close --reason "not planned"`. Never delete.
+2. Gate before any scouting: show the count and each issue's number and title, then ask whether to review them: all, only the numbers I name, or skip. No answer means skip. Skip ends this phase (and the whole session in adopt mode) with nothing dispatched or changed.
+3. Per issue I chose, dispatch `task-scout` in verify mode (foreground, batched in one message, ~8 at a time) with the issue text and repo path, plus `git log` since the issue's `updatedAt` for recent merges.
+4. Propose per issue: label into a section (and stack), close as stale (with the comment text shown), or leave. Apply only what I approve per item: `gh issue edit --add-label`, or `gh issue comment` then `gh issue close --reason "not planned"`. Never delete.
 
 ## Phase 4: flip the source
 
