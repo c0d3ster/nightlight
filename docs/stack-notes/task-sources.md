@@ -123,3 +123,13 @@ Branch: overnight/2026-11-02/r1-03-t24-linear-task-source-module
 - Auth header is the raw key (Linear personal keys take no `Bearer`). `TS_LINEAR_URL` is overridable for tests.
 - `--stop-after` error already comes from `run_repo()` checking `TS_NUMERIC_IDS != 1`; no change needed there.
 - Deviation: comments are all included (Linear has no author-association field; only workspace members can comment). Tested only against a mocked `curl`, never live.
+
+## #25 Linear housekeeping and skill write paths via MCP
+
+Branch: overnight/2026-11-02/r1-04-t25-linear-write-paths
+
+- Added `build_housekeeping_prompt_linear()` to `overnight.sh`, dispatched from `build_housekeeping_prompt()` when `TASK_SOURCE=linear`. Mirrors the GitHub variant: Done only after the PR merged (checked via `gh pr`), blocked / needs-human labels, PR-link comments, contradictory-label flagging, merged-PR sweep. Every tracker write goes through `mcp__linear__*` (`save_issue`, `save_comment`, `create_issue_label`); meta.json counters and the stack-notes removal still use the housekeeping commit + PR.
+- Task prompt gets a Linear paragraph (read via `get_issue`/`list_comments`, no closing keywords, no label edits).
+- Label names come from `ts_linear_label`.
+- Deviation: the `/plan-tasks` and `/discover-tasks` SKILL.md `linear` branches (and `mcp__linear__*` allow entries in `.claude/settings.json`) could not be written: edits under `.claude/` were denied in this headless session. The exact text is in the PR description as a NEEDS HUMAN step.
+- Not done: the existing-PR skip in the dispatch loop (`find_task_pr`) is still GitHub-only, since it matches numeric `-t<n>-` branch segments; Linear identifiers need a case-insensitive match. Worth a follow-up.
