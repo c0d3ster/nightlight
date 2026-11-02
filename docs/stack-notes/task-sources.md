@@ -93,3 +93,11 @@ Branch: overnight/2026-10-20/r2-09-t32-migrate-tasks-to-github
 - `.claude/settings.json`: allow `gh label create`, push and merge for `chore/tasks-migrate-*`.
 - Interfaces: `migrate.sh`, `/migrate-tasks` skill.
 - Deviation: not exercised live against GitHub. Decisions and Discovered sections are left in TASKS.md rather than migrated. A wording slip in SKILL.md's label line (Phase 2 step 2) could not be fixed because the edit was permission-blocked.
+
+## #22 Linear OAuth-persistence gate and MCP tool inventory
+
+Branch: overnight/2026-11-02/r1-01-t22-linear-mcp-inventory
+
+- Added `docs/research/linear-mcp.md`: tool inventory (read, write, destructive groups), verified params for `whoami`, `list_teams`, `get_team`, `list_issues`, and the narrow allow list to rerun the test.
+- Interfaces: none (docs only).
+- Deviation: persistence test could not run. Linear calls were denied under `acceptEdits` with no `mcp__linear__*` allow entries. Status is needs-human: add the five read-only allows listed in the doc, then rerun. Persistence is untested, not passed.
