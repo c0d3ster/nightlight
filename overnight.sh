@@ -500,6 +500,12 @@ This task starts stack \"$stack\". Branch from the repo's default branch (curren
 This task is GitHub issue \`#$num\`; the text above is a synthesized snapshot. Read full detail and comments with \`gh issue view $num --comments$repo_flag\`. Reference the issue as \`#$num\` in backticks in the PR body, never use \`Closes #$num\` or any other closing keyword (closing is housekeeping's job), and never set status labels (nl:blocked, nl:needs-human) yourself; report status via TASK_RESULT only."
   fi
 
+  if [[ "$TASK_SOURCE" == "linear" ]]; then
+    p="$p
+
+This task is Linear issue \`$num\`; the text above is a synthesized snapshot. Read full detail and comments with the Linear MCP tools (get_issue, list_comments). Reference the issue as \`$num\` in backticks in the PR body, never use a closing keyword or Linear magic word (closing is housekeeping's job), never edit the issue, and never set status labels (nl:blocked, nl:needs-human) yourself; report status via TASK_RESULT only."
+  fi
+
   if [[ -n "$retried" ]]; then
     p="$p
 
@@ -529,6 +535,10 @@ build_housekeeping_prompt() {
   local run_summary="$1" skipped_summary="$2" run="$3"
   if [[ "$TASK_SOURCE" == "github" ]]; then
     build_housekeeping_prompt_github "$run_summary" "$skipped_summary" "$run"
+    return
+  fi
+  if [[ "$TASK_SOURCE" == "linear" ]]; then
+    build_housekeeping_prompt_linear "$run_summary" "$skipped_summary" "$run"
     return
   fi
   local p="A target repo has been added to this session via --add-dir. This session runs ONLY the end-of-session housekeeping step from the \"Overnight Agent Workflow\" rules in CLAUDE.md (this repo, nightlight's own) -- this run just finished dispatching one fresh session per task, so you were not present for any of them. Do not attempt any task work yourself. This is run $run of today, so name the housekeeping branch overnight/<YYYY-MM-DD>/r$run-housekeeping.
@@ -600,6 +610,52 @@ Also sweep every other open issue labeled $agent_ready, $verify or $research (th
 Also flag, never silently resolve, any open issue carrying contradictory labels (e.g. $blocked together with $needs_human, or more than one section label): comment on the issue describing the conflict and list it in the housekeeping PR body, but change no labels.
 
 nightlight-meta.json still goes through git: create overnight/<YYYY-MM-DD>/r$run-housekeeping from main and make one commit that updates tasksCompleted/tasksBlocked in docs/nightlight-meta.json (create it with nextTaskNumber: 1, tasksCompleted: 0, tasksBlocked: 0 if missing) to reflect the issues closed as completed and newly labeled blocked this run, plus any stack-notes removals below. Open it as its own PR, chore: session housekeeping <date>, targeting main, listing the issue closes, label changes and flagged conflicts in the body. If there is nothing to commit, skip the commit and PR.
+
+Before opening that PR, also do the branch-cleanup sweep: check every docs/stack-notes/*.md file's Branch: lines for merge state and delete any branch whose PR already merged, locally and on origin (a git operation, not part of the housekeeping commit or PR; it happens even when the file is kept). After that, git rm each finished stack's docs/stack-notes/<stack>.md inside the housekeeping commit and list the removal in the PR body. A stack is finished only when ALL hold: every Branch: line's PR is MERGED; no open issue carries the stack's nl:stack:<name> label; no open PR has a head branch for this stack (gh pr list --state open); no task from the stack appears in the TASK_RESULT lines above. Keep the file if any check fails, if gh fails, or if the file has zero Branch: lines."
+
+  printf '%s' "$p"
+}
+
+# Linear-mode variant of build_housekeeping_prompt_github: same structure, but
+# every tracker write goes through the Linear MCP tools instead of gh issue.
+# PR state still comes from gh pr (the code lives on GitHub).
+build_housekeeping_prompt_linear() {
+  local run_summary="$1" skipped_summary="$2" run="$3"
+  local blocked needs_human agent_ready verify research
+  blocked="$(ts_linear_label blocked nl:blocked)"
+  needs_human="$(ts_linear_label needsHuman nl:needs-human)"
+  agent_ready="$(ts_linear_label agentReady nl:agent-ready)"
+  verify="$(ts_linear_label verify nl:verify)"
+  research="$(ts_linear_label research nl:research)"
+  local p="A target repo has been added to this session via --add-dir. This session runs ONLY the end-of-session housekeeping step from the \"Overnight Agent Workflow\" rules in CLAUDE.md (this repo, nightlight's own) -- this run just finished dispatching one fresh session per task, so you were not present for any of them. Do not attempt any task work yourself. This is run $run of today, so name the housekeeping branch overnight/<YYYY-MM-DD>/r$run-housekeeping.
+
+This repo's backlog is Linear issues (taskSource \"linear\", team $TS_LINEAR_TEAM_ID): the issues, not TASKS.md, are the task list. Do NOT create or edit TASKS.md or any docs/tasks-archive/ file, and skip the TASKS.md-specific maintenance rules in CLAUDE.md. Task ids below are Linear identifiers (e.g. ENG-142). Make every tracker change through the Linear MCP tools (mcp__linear__*: list_issues, get_issue, save_issue, save_comment, list_issue_labels, create_issue_label, list_issue_statuses; load their schemas first), never gh issue. gh is only for PR and branch state.
+
+Here is what each dispatched task's own session reported when it finished, verbatim (one TASK_RESULT line per task attempted this run):
+${run_summary:-"(no tasks were attempted this run)"}"
+
+  if [[ -n "$skipped_summary" ]]; then
+    p="$p
+
+Tasks NOT attempted this run (filtered out by --limit) -- leave these issues exactly as-is, they are neither done nor blocked, just out of scope this run:
+$skipped_summary"
+  fi
+
+  p="$p
+
+Treat the TASK_RESULT lines above as a starting point, not ground truth -- a task session can misreport, so confirm each PR/branch's actual state with git/gh before changing any issue (e.g. gh pr view <pr> --json state,mergedAt, or gh pr list --head <branch> --state all). Then, per attempted task:
+- PR merged: save_issue to move it to the team's Done (completed-type) status and drop any status labels ($blocked, $needs_human) that no longer apply, plus save_comment linking the PR. Labels set through save_issue replace the whole list, so read the issue's current labels first and resend the ones you keep. Wrap task ids in backticks in comments you write.
+- PR open, not merged: leave the issue's status alone; no label change unless it reported needs-human.
+- Reported done with pr=none (a Verify task that found the work already exists): move it to Done with the note as the comment.
+- Reported blocked (no PR): add the $blocked label and save_comment the reason from the note.
+- Reported needs-human: add the $needs_human label and save_comment the exact steps (from the task PR description), then leave it open.
+Never move an issue to Done unless its PR merged (or it is the pr=none case above). Before adding $blocked or $needs_human, create it with create_issue_label if list_issue_labels shows the team lacks it.
+
+Also sweep every other open issue labeled $agent_ready, $verify or $research (this includes any also labeled $needs_human), not just ones reported this run: an earlier run's task PR may have merged since, and nothing else moves the issue. Task branches are named overnight/<date>/r<R>-<PP>-t<id>-<slug>, so find an issue's PR with gh pr list --state all --json number,state,headRefName,mergedAt and match the id case-insensitively in headRefName. If that PR merged, move the issue to Done with a PR-link comment and remove any status labels. If it is still open, or there is no PR, leave the issue alone.
+
+Also flag, never silently resolve, any open issue carrying contradictory labels (e.g. $blocked together with $needs_human, or more than one section label): save_comment describing the conflict and list it in the housekeeping PR body, but change no labels.
+
+nightlight-meta.json still goes through git: create overnight/<YYYY-MM-DD>/r$run-housekeeping from main and make one commit that updates tasksCompleted/tasksBlocked in docs/nightlight-meta.json (create it with nextTaskNumber: 1, tasksCompleted: 0, tasksBlocked: 0 if missing) to reflect the issues moved to Done and newly labeled blocked this run, plus any stack-notes removals below. Open it as its own PR, chore: session housekeeping <date>, targeting main, listing the status moves, label changes and flagged conflicts in the body. If there is nothing to commit, skip the commit and PR.
 
 Before opening that PR, also do the branch-cleanup sweep: check every docs/stack-notes/*.md file's Branch: lines for merge state and delete any branch whose PR already merged, locally and on origin (a git operation, not part of the housekeeping commit or PR; it happens even when the file is kept). After that, git rm each finished stack's docs/stack-notes/<stack>.md inside the housekeeping commit and list the removal in the PR body. A stack is finished only when ALL hold: every Branch: line's PR is MERGED; no open issue carries the stack's nl:stack:<name> label; no open PR has a head branch for this stack (gh pr list --state open); no task from the stack appears in the TASK_RESULT lines above. Keep the file if any check fails, if gh fails, or if the file has zero Branch: lines."
 
