@@ -8,8 +8,8 @@ A target repo is attached via --add-dir; args are `--to github` (the only suppor
 
 ## Setup
 
-1. Read the repo's `docs/nightlight-meta.json`. `taskSource` already `github`: stop and say so. Missing TASKS.md or no open items (`- [ ]`, `- [!]`, `- [/]`): skip phases 1-2 and go to phase 3.
-2. Resolve the issue repo: `github.repo` from the meta file, else origin (`gh repo view --json nameWithOwner`). Load the module from the nightlight checkout: `source lib/task-source.sh`, then set `TS_GITHUB_REPO` and use `ts_find_related` and `ts_gh_label` from `lib/task-source-github.sh` (source it directly; the meta file is not yet `github`). Label names come from `ts_gh_label` (defaults `nl:agent-ready`, `nl:verify`, `nl:research`, `nl:blocked`, `nl:needs-human`, `nl:stack:<name>`), honoring any `labels` overrides.
+1. Read the repo's `docs/nightlight-meta.json`. Open items (`- [ ]`, `- [!]`, `- [/]`) in TASKS.md decide whether migration is needed, not the flag: `taskSource` can be set to `github` by hand or by an earlier step without the backlog having moved. `taskSource` already `github` and no open items: stop and say so. `taskSource` already `github` with open items: partial migration, run every phase and skip only the `taskSource` flip in Phase 4 step 5. Otherwise, missing TASKS.md or no open items: skip phases 1-2 and go to phase 3.
+2. Resolve the issue repo: `github.repo` from the meta file, else origin (`gh repo view --json nameWithOwner`). Load the module from the nightlight checkout: `source lib/task-source.sh`, then set `TS_GITHUB_REPO` and use `ts_find_related` and `ts_gh_label` from `lib/task-source-github.sh` (source it directly; the meta file may not be `github` yet). Label names come from `ts_gh_label` (defaults `nl:agent-ready`, `nl:verify`, `nl:research`, `nl:blocked`, `nl:needs-human`, `nl:stack:<name>`), honoring any `labels` overrides.
 3. Check the target repo is on its default branch with a clean tree before anything else; if not, stop and tell me.
 
 ## Phase 1: dedupe
@@ -44,7 +44,7 @@ Only after every open TASKS.md item is an issue, was archived as done, or was ex
 2. Resolve the default branch (`git -C <repo> symbolic-ref --quiet --short refs/remotes/origin/HEAD`, fall back to `main` then `master`); not on it: stop, leave edits uncommitted, tell me.
 3. Pull, branch off as `chore/tasks-migrate-<YYYY-MM-DD>` (append `-2`, `-3`... if taken).
 4. Move, never delete: write a NEW `docs/tasks-archive/<YYYY-MM-DD>-migrated.md` holding every open TASKS.md item verbatim with its issue number, "skipped by human", or "already done" with its merged PR numbers and scout's one-line finding, then remove those items from TASKS.md (leave Decisions and Discovered content in place).
-5. Set `"taskSource": "github"` in `docs/nightlight-meta.json` (create the file with `nextTaskNumber: 1, tasksCompleted: 0, tasksBlocked: 0` if missing, keep existing counters), plus `"github": {"repo": "<owner/name>"}` only if the backlog lives somewhere other than origin.
+5. Set `"taskSource": "github"` in `docs/nightlight-meta.json`, unless it is already set (create the file with `nextTaskNumber: 1, tasksCompleted: 0, tasksBlocked: 0` if missing, keep existing counters), plus `"github": {"repo": "<owner/name>"}` only if the backlog lives somewhere other than origin.
 6. Stage only those files. Commit `chore(tasks): migrate TASKS.md to GitHub issues`, push, `gh pr create` to the default branch, report the URL.
 7. Merge with `gh pr merge <branch-name> --squash --delete-branch` (exact branch name, matching the scoped permission), safe because everything in it was approved above. Failure: report and leave the PR open. On success check out the default branch and pull.
 
