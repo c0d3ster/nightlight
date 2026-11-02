@@ -156,7 +156,7 @@ Skills live in a named folder with a `SKILL.md` inside (not a flat `.md` file di
 pnpm nightlight [repo] [--scan] [overnight flags]  # ./nightlight.sh [repo] [--scan] [overnight flags]
 pnpm discover [repo] [--scan]                       # ./discover.sh [repo] [--scan]
 pnpm plan [repo]                                     # ./plan.sh [repo]
-pnpm migrate <repo> --to github                      # ./migrate.sh <repo> --to github
+pnpm migrate <repo> --to github|linear               # ./migrate.sh <repo> --to github|linear
 pnpm tidy <repo> [--labels | --no-labels]            # ./tidy.sh <repo> [--labels | --no-labels]
 pnpm overnight some-repo                             # ./overnight.sh some-repo
 pnpm stats [some-repo]                               # ./stats.sh [some-repo]

@@ -4,7 +4,7 @@ description: Moves a target repo's open TASKS.md items into GitHub issues (local
 disable-model-invocation: true
 ---
 
-A target repo is attached via --add-dir; args are `--to github` (the only supported direction). Linear and GitHub-to-local are out of scope. Nothing is created, closed, edited, or relabeled without my explicit per-item approval. Announce each phase in one line before starting it.
+A target repo is attached via --add-dir; args are `--to github` or `--to linear`. `--to linear`: skip everything below and follow "Linear mode" at the end. GitHub-to-local is out of scope. Nothing is created, closed, edited, or relabeled without my explicit per-item approval. Announce each phase in one line before starting it.
 
 ## Setup
 
@@ -47,3 +47,13 @@ Only after every open TASKS.md item is an issue, was archived as done, or was ex
 7. Merge with `gh pr merge <branch-name> --rebase --delete-branch` (exact branch name, matching the scoped permission), safe because everything in it was approved above. Failure: report and leave the PR open. On success check out the default branch and pull.
 
 Do not implement any code in this session.
+
+## Linear mode (`--to linear`)
+
+Mirrors the flow above with these differences. No `gh issue` or `gh label` calls anywhere; `gh pr list`, `gh pr create`, `gh pr merge` and `git` stay.
+
+- Setup: the same guard (open TASKS.md items decide, not `taskSource`; `taskSource` already `linear` with no open items: nothing to migrate, stop; already `linear` with open items: run every phase, skip only the flip). Team id: `linear.teamId` from the meta file, else ask me. Source `lib/task-source.sh` and `lib/task-source-linear.sh`, set `TS_LINEAR_TEAM_ID`, run `resolve_linear_key <repo>` for `LINEAR_API_KEY`, and use `ts_find_related` and `ts_linear_label` (honoring `labels` overrides). Load the Linear MCP tool schemas (ToolSearch `select:`) for `list_issue_labels`, `create_issue_label`, `save_issue`, `save_comment`, `list_issue_statuses`.
+- Phase 1: as above. Dedupe with `ts_find_related <repo> "<phrase>"` (prints `<state>	<identifier>	<title>`) and again for `Migrated from TASKS.md #<n>`, so a re-run after a partial migration matches already-created issues and skips them. The shipped-work check is unchanged: `gh pr list --repo <origin repo>` (from `gh repo view --json nameWithOwner`) and `git`.
+- Phase 2: same approval gate, labels and body. Missing labels: `create_issue_label` (team-scoped, after `list_issue_labels`). Create each issue with `save_issue` (team, title, body, label names or ids); labels set through `save_issue` replace the whole list, so send the full set. Record `#<n>` to the Linear identifier. Failures: report and stop.
+- Phase 3: skipped. Reviewing existing unlabeled Linear issues is out of scope (no `/tidy-issues` step in Linear mode).
+- Phase 4: as above with `Linear issues` in the archive and commit message (`chore(tasks): migrate TASKS.md to Linear issues`); archive entries carry the Linear identifier. Step 5 sets `"taskSource": "linear"` and `"linear": {"teamId": "<id>"}` unless already set; no `github` block. Same PR and `gh pr merge <branch-name> --rebase --delete-branch`.
