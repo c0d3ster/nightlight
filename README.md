@@ -245,6 +245,29 @@ An open issue with a section label is a task, and its number is the task id. Hou
 
 Permissions: `.claude/settings.json` allows only `gh issue view/list/comment/create/edit/close`, `gh label list/create`, `gh pr view/list`, and deletion of `overnight/*` branches, and denies `gh issue delete` and `gh repo delete`. There is no blanket `gh` or MCP allow.
 
+## Linear task source (opt-in)
+
+Local `TASKS.md` and GitHub issues are unchanged. To use a Linear team as the work queue, set this in the target repo's `docs/nightlight-meta.json`:
+
+```json
+{
+  "taskSource": "linear",
+  "linear": { "teamId": "ENG" }
+}
+```
+
+`linear.teamId` is a team key or UUID. `labels` overrides work as in GitHub mode. Tasks are open issues on that team with a section label; their ids are Linear identifiers like `ENG-142`, so `--stop-after` is not available (`--limit` and `--stack` work).
+
+One-time setup:
+
+1. **GitHub CLI.** `gh` is still required in Linear mode: task PRs, branch and PR checks, and housekeeping's merge-state checks all use it. Only the `gh issue` / `gh label` calls go away. Run `gh auth login` once and confirm with `gh auth status`.
+2. **API key.** Create a Linear personal API key and put `LINEAR_API_KEY=...` in an env file. Resolution order: the target repo's `.env.local`, `.env.*.local`, `.env.*`, `.env`, then nightlight's own `.env`. First match wins, and only that one line is read (files are never sourced). A warning prints if the file is tracked by git.
+3. **MCP server.** Register Linear's MCP server once, interactively, so OAuth is established: `claude mcp add --transport http linear https://mcp.linear.app/mcp`, then authenticate via `/mcp` in a Claude session.
+
+Bash lists tasks through Linear's GraphQL API with the key. Everything the agent does to issues (read, label, comment, close) goes through the MCP server. Linear's optional GitHub integration is separate and not needed.
+
+Permissions: `.claude/settings.json` allows only `mcp__linear__` `list_issues`, `get_issue`, `list_comments`, `list_issue_labels`, `list_issue_statuses`, `save_issue`, `save_comment`, and `create_issue_label`, and denies `delete_comment`, `delete_attachment`, `delete_diff_comment`, and `delete_status_update`. There is no server-level MCP allow.
+
 ## TASKS.md format (in the target repo)
 
 ```markdown
