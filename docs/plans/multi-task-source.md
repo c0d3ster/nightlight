@@ -169,7 +169,7 @@ source-agnostic. Per source:
 
 | Concern | Linear | GitHub |
 |---|---|---|
-| Auth | New `LINEAR_API_KEY`, `.env` resolution order | `gh` is already authenticated and already used by `overnight.sh` |
+| Auth | New `LINEAR_API_KEY`, env-file resolution order | `gh` is already authenticated and already used by `overnight.sh` |
 | Agent write path | MCP server, OAuth, tool names unverified | `gh issue edit/comment/create`, same CLI the agent already uses for PRs |
 | Unattended-auth risk | OAuth persistence across fresh `claude -p` processes needs an empirical gate | None new; `gh` auth is a static token |
 | Bash listing | curl + GraphQL | `gh issue list --json` |
@@ -263,12 +263,15 @@ Progress / Done / Canceled); the `nl:*` labels from 1.5 are layered on top.
 custom Linear workflow states so opt-in needs no per-team admin setup in the
 Linear UI (states are per-team config; labels are creatable via API/MCP).
 
-### 3.2 Credential: target repo's `.env` first, nightlight's as fallback
+### 3.2 Credential: target repo's env files first, nightlight's as fallback
 
-Resolve `LINEAR_API_KEY` from the target repo's own `.env`, falling back to
-nightlight's `.env`. Never blanket-`source` a target repo's `.env`, since it
-may hold unrelated or conflicting variables. Extract just the one key with a
-targeted `grep '^LINEAR_API_KEY=' "$repo_path/.env"`. This stays
+Resolve `LINEAR_API_KEY` from the target repo's own env files, falling back to
+nightlight's `.env`. Search every variant, since repos differ in which ones
+they gitignore: `.env.local` first, then `.env.*.local`, `.env.*`, and `.env`
+last; first match wins. If the file the key came from is tracked by git, warn
+that the key is committed. Never blanket-`source` any of them, since they may
+hold unrelated or conflicting variables. Extract just the one key with a
+targeted `grep '^LINEAR_API_KEY=' "$repo_path/<file>"`. This stays
 wrapper-script-only, the same carve-out `PROJECT_REPOS_DIR` sourcing relies
 on; the existing `Read(.env)` / `Read(.env.*)` deny still stops the agent
 reading it. A repo can thus use a different workspace or team than
