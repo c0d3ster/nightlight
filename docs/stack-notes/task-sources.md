@@ -148,4 +148,5 @@ Branch: overnight/2026-11-02/r1-06-t33-migrate-to-linear
 
 - `migrate.sh` accepts `--to github|linear`, rejects anything else, and passes `--to $TO` to `/migrate-tasks`. README script list updated.
 - `/migrate-tasks` SKILL.md: GitHub text untouched except the args line; new "Linear mode" section at the end (dedupe via `ts_find_related` + marker, MCP `save_issue`/`create_issue_label`, Phase 3 skipped, Phase 4 flips `taskSource` + `linear.teamId`).
+- Review fixes: stale frontmatter description updated; the marker search is `Migrated from TASKS.md #<n> (` so `#5` does not match `#50`; every Bash call re-sources the modules and exports `TS_LINEAR_TEAM_ID`/`LINEAR_API_KEY` (shell state does not persist); setup lists the team's existing issues and stops if they look like another repo's (one team per repo); README gains a "Migrating an existing repo" paragraph.
 - Deviation: the live run `pnpm migrate c0d3ster --to linear` is a human step (creates real Linear issues); not run here. No permission changes needed.
