@@ -263,7 +263,7 @@ Local `TASKS.md` and GitHub issues are unchanged. To use a Linear team as the wo
 One-time setup:
 
 1. **GitHub CLI.** `gh` is still required in Linear mode: task PRs, branch and PR checks, and housekeeping's merge-state checks all use it. Only the `gh issue` / `gh label` calls go away. Run `gh auth login` once and confirm with `gh auth status`.
-2. **API key.** Create a Linear personal API key and put `LINEAR_API_KEY=...` in an env file. Resolution order: the target repo's `.env.local`, `.env.*.local`, `.env.*`, `.env`, then nightlight's own `.env`. First match wins, and only that one line is read (files are never sourced). A warning prints if the file is tracked by git.
+2. **API key.** Create a Linear personal API key and put `LINEAR_API_KEY=...` in an env file. Resolution: the target repo's env files first, then nightlight's own, with the same rules for both. Files git reports as ignored are tried before the rest, since those are the private ones; within each group the order is `.env.local`, `.env.*.local`, `.env.*`, `.env`. Template files (`.env.example`, `.env.sample`, `.env.template`, `.env.dist`) are skipped. First match wins, and only that one line is read (files are never sourced). A warning prints if the file holding the key is tracked by git or not gitignored.
 3. **MCP server.** Register Linear's MCP server once, interactively, so OAuth is established: `claude mcp add --transport http linear https://mcp.linear.app/mcp`, then authenticate via `/mcp` in a Claude session.
 
 Bash lists tasks through Linear's GraphQL API with the key. Everything the agent does to issues (read, label, comment, close) goes through the MCP server. Linear's optional GitHub integration is separate and not needed.

@@ -266,10 +266,15 @@ Linear UI (states are per-team config; labels are creatable via API/MCP).
 ### 3.2 Credential: target repo's env files first, nightlight's as fallback
 
 Resolve `LINEAR_API_KEY` from the target repo's own env files, falling back to
-nightlight's `.env`. Search every variant, since repos differ in which ones
-they gitignore: `.env.local` first, then `.env.*.local`, `.env.*`, and `.env`
-last; first match wins. If the file the key came from is tracked by git, warn
-that the key is committed. Never blanket-`source` any of them, since they may
+nightlight's own, with the same rules for both. Search every variant, since
+repos differ in which ones they gitignore. Ask git which candidates are
+ignored (`git check-ignore`) and try those first, because the ignored file is
+the private one by definition; then the rest. Within each group the order is
+`.env.local`, `.env.*.local`, `.env.*`, `.env`. Skip templates (`.example`,
+`.sample`, `.template`, `.dist`), which never hold real values. First match
+wins; the files are not merged, because a stale value in a lower-priority file
+could silently apply. If the file the key came from is tracked by git or not
+gitignored, warn. Never blanket-`source` any of them, since they may
 hold unrelated or conflicting variables. Extract just the one key with a
 targeted `grep '^LINEAR_API_KEY=' "$repo_path/<file>"`. This stays
 wrapper-script-only, the same carve-out `PROJECT_REPOS_DIR` sourcing relies
