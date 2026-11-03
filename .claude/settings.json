@@ -51,7 +51,15 @@
       "mcp__linear__list_teams",
       "mcp__linear__get_team",
       "mcp__linear__list_issues",
-      "mcp__linear__get_issue"
+      "mcp__linear__get_issue",
+      "mcp__linear__list_issue_labels",
+      "mcp__linear__list_issue_statuses",
+      "mcp__linear__list_comments",
+      "mcp__linear__list_projects",
+      "mcp__linear__list_milestones",
+      "mcp__linear__save_issue",
+      "mcp__linear__save_comment",
+      "mcp__linear__create_issue_label"
     ],
     "deny": [
       "Bash(git push origin main:*)",
@@ -66,7 +74,11 @@
       "Read(.env)",
       "Read(.env.*)",
       "Bash(git commit --no-verify:*)",
-      "Bash(git -C * commit --no-verify:*)"
+      "Bash(git -C * commit --no-verify:*)",
+      "mcp__linear__delete_comment",
+      "mcp__linear__delete_attachment",
+      "mcp__linear__delete_status_update",
+      "mcp__linear__delete_diff_comment"
     ]
   }
 }
