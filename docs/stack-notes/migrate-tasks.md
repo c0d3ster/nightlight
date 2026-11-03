@@ -12,7 +12,7 @@ Branch: overnight/2026-11-03/r2-01-t34-migrate-decisions-discovered
 - Only skill/doc text changed: `.claude/skills/migrate-tasks/SKILL.md`, `plan-tasks/SKILL.md` (remote Items bullets), `README.md`. No shell code added; labels read via existing `ts_gh_label` / `ts_linear_label` with keys `decision` and `discovered`.
 
 ### Deviations
-- `.claude/settings.json` untouched. NEEDS HUMAN: allow `Bash(git rm TASKS.md)` and `Bash(git -C * rm TASKS.md)` (narrowest form that covers the skill), then run `pnpm migrate c0d3ster --to linear` to confirm only Decisions `#13` is created (`#12` was already archived as done in c0d3ster).
+- `.claude/settings.json` untouched. Decision: no standing `git rm` permission. The narrow rule forms do not match (see the allowlist-patterns item in TASKS.md); the only working form, `Bash(git -C * rm *)`, would also let unattended overnight sessions delete tracked files. The interactive migrate session prompts once for `git -C <repo> rm TASKS.md` and the human approves it. Next, run `pnpm migrate c0d3ster --to linear` to confirm only Decisions `#13` is created (`#12` was already archived as done in c0d3ster).
 
 ## #35 Ask for a separate merge confirmation in `/migrate-tasks` Phase 4
 
