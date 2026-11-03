@@ -237,7 +237,7 @@ Local `TASKS.md` stays the default. Nothing changes unless a target repo opts in
 
 - `taskSource`: `"local"` (default, `TASKS.md`) or `"github"`.
 - `github.repo`: optional, defaults to the target repo's `origin`.
-- `labels`: optional overrides. Defaults are `nl:agent-ready`, `nl:verify`, `nl:research` (section), `nl:blocked`, `nl:needs-human`, `nl:discovered` (un-triaged), and `nl:stack:<name>` (stack). Override keys: `agentReady`, `verify`, `research`, `blocked`, `needsHuman`, `stackPrefix`.
+- `labels`: optional overrides. Defaults are `nl:agent-ready`, `nl:verify`, `nl:research` (section), `nl:blocked`, `nl:needs-human`, `nl:decision` (human-only, never dispatched), `nl:discovered` (un-triaged, never dispatched), and `nl:stack:<name>` (stack). Override keys: `agentReady`, `verify`, `research`, `blocked`, `needsHuman`, `decision`, `discovered`, `stackPrefix`.
 
 An open issue with a section label is a task, and its number is the task id. Housekeeping closes issues once their PR merges and applies `nl:blocked` / `nl:needs-human` with a comment. It does not write TASKS.md or the archive.
 
@@ -266,7 +266,7 @@ One-time setup:
 2. **API key.** Create a Linear personal API key and put `LINEAR_API_KEY=...` in an env file. Resolution: the target repo's env files first, then nightlight's own, with the same rules for both. Files git reports as ignored are tried before the rest, since those are the private ones; within each group the order is `.env.local`, `.env.*.local`, `.env.*`, `.env`. Template files (`.env.example`, `.env.sample`, `.env.template`, `.env.dist`) are skipped. First match wins, and only that one line is read (files are never sourced). A warning prints if the file holding the key is tracked by git or not gitignored.
 3. **MCP server.** Register Linear's MCP server once, interactively, at user scope so every session sees it regardless of directory (the default scope ties it to the directory you ran it in): `claude mcp add --scope user --transport http linear https://mcp.linear.app/mcp`, then authenticate via `/mcp` in a Claude session. Confirm with `claude mcp get linear` (scope "User config", status connected).
 
-**Migrating an existing repo.** `pnpm migrate <repo> --to linear` moves the repo's open `TASKS.md` items into the Linear team as issues, archives any checked-off `[x]` items (with their merged PRs) instead of leaving them in `TASKS.md`, then flips `taskSource` to `linear` in a small PR. It is interactive: it first shows what the team already holds (one team per repo), dedupes against existing issues and merged PRs, and asks before creating each issue. Re-running after a partial migration is safe, since each created issue carries a `Migrated from TASKS.md #<n> (` marker in its body. Items in `Decisions` and `Discovered` are left in `TASKS.md`. Reviewing a repo's existing unlabeled Linear issues is not part of this.
+**Migrating an existing repo.** `pnpm migrate <repo> --to linear` moves the repo's open `TASKS.md` items into the Linear team as issues, archives any checked-off `[x]` items (with their merged PRs) instead of leaving them in `TASKS.md`, then flips `taskSource` to `linear` in a small PR. It is interactive: it first shows what the team already holds (one team per repo), dedupes against existing issues and merged PRs, and asks before creating each issue. Re-running after a partial migration is safe, since each created issue carries a `Migrated from TASKS.md #<n> (` marker in its body. `Decisions` items become `nl:decision` issues and `Discovered` items become `nl:discovered` issues (each with its own marker, `Migrated from TASKS.md discovered:<hash> (` for Discovered), and `TASKS.md` is removed once nothing remains (kept only if you skipped an item). Reviewing a repo's existing unlabeled Linear issues is not part of this.
 
 Bash lists tasks through Linear's GraphQL API with the key. Everything the agent does to issues (read, label, comment, close) goes through the MCP server. Linear's optional GitHub integration is separate and not needed.
 
@@ -287,6 +287,8 @@ Permissions: `.claude/settings.json` allows only `mcp__linear__` `whoami`, `list
 **Costs accepted:** two credentials (the key plus the OAuth login), tool definitions taking up context, and an OAuth session that must stay logged in unattended. That last one was tested: seven independent headless launches kept their session (`docs/research/linear-mcp.md`). **Fallback** if OAuth proves flaky: a thin wrapper script with fixed operations (comment, set labels, move state) that holds the key, allowed per script, which gives similar protection without OAuth.
 
 ## TASKS.md format (in the target repo)
+
+This applies to the default `local` source only. Repos using the `github` or `linear` source have no `TASKS.md`: tasks are labeled issues, and `pnpm migrate` removes the file.
 
 ```markdown
 ## Agent-Ready
