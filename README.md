@@ -264,11 +264,25 @@ One-time setup:
 
 1. **GitHub CLI.** `gh` is still required in Linear mode: task PRs, branch and PR checks, and housekeeping's merge-state checks all use it. Only the `gh issue` / `gh label` calls go away. Run `gh auth login` once and confirm with `gh auth status`.
 2. **API key.** Create a Linear personal API key and put `LINEAR_API_KEY=...` in an env file. Resolution: the target repo's env files first, then nightlight's own, with the same rules for both. Files git reports as ignored are tried before the rest, since those are the private ones; within each group the order is `.env.local`, `.env.*.local`, `.env.*`, `.env`. Template files (`.env.example`, `.env.sample`, `.env.template`, `.env.dist`) are skipped. First match wins, and only that one line is read (files are never sourced). A warning prints if the file holding the key is tracked by git or not gitignored.
-3. **MCP server.** Register Linear's MCP server once, interactively, so OAuth is established: `claude mcp add --transport http linear https://mcp.linear.app/mcp`, then authenticate via `/mcp` in a Claude session.
+3. **MCP server.** Register Linear's MCP server once, interactively, at user scope so every session sees it regardless of directory (the default scope ties it to the directory you ran it in): `claude mcp add --scope user --transport http linear https://mcp.linear.app/mcp`, then authenticate via `/mcp` in a Claude session. Confirm with `claude mcp get linear` (scope "User config", status connected).
 
 Bash lists tasks through Linear's GraphQL API with the key. Everything the agent does to issues (read, label, comment, close) goes through the MCP server. Linear's optional GitHub integration is separate and not needed.
 
 Permissions: `.claude/settings.json` allows only `mcp__linear__` `whoami`, `list_teams`, `get_team`, `list_issues`, `get_issue`, `list_comments`, `list_issue_labels`, `list_issue_statuses`, `list_projects`, `list_milestones`, `save_issue`, `save_comment`, and `create_issue_label`, and denies `delete_comment`, `delete_attachment`, `delete_diff_comment`, and `delete_status_update`. There is no server-level MCP allow.
+
+### Why reads use GraphQL and writes use MCP
+
+**Reads are GraphQL because the dispatcher is plain bash.** `overnight.sh` decides what to dispatch, applies `--stack` and `--limit`, and checks whether there is any work at all before a `claude` session exists, and bash cannot call an MCP tool. Listing through a `claude -p` session would cost tokens on every run and every eligibility check and make the output depend on the model.
+
+**Writes are MCP for three reasons that an agent calling REST or GraphQL itself does not get:**
+
+1. **Credentials stay out of the model's reach.** The host runs the OAuth login and holds the tokens. The API key lives only in bash, so a task session, or a prompt injection hidden in an issue body, never sees a key that can do anything in the workspace.
+2. **Permission by operation.** `.claude/settings.json` can allow `mcp__linear__save_comment` and deny `mcp__linear__delete_comment`. Allowing `curl api.linear.app/graphql` would allow every query and mutation, because they all go through one endpoint.
+3. **Curated tools.** `save_issue` takes sensible arguments and returns trimmed output, so the model does not hand-write GraphQL filters, which is where agents go wrong.
+
+**What MCP does not add:** typed schemas and discovery (GraphQL introspection and OpenAPI give the same) and OAuth itself (MCP standardized how hosts run it). It also exists because chat hosts such as Claude on the web cannot make arbitrary authenticated HTTP calls and only speak MCP.
+
+**Costs accepted:** two credentials (the key plus the OAuth login), tool definitions taking up context, and an OAuth session that must stay logged in unattended. That last one was tested: seven independent headless launches kept their session (`docs/research/linear-mcp.md`). **Fallback** if OAuth proves flaky: a thin wrapper script with fixed operations (comment, set labels, move state) that holds the key, allowed per script, which gives similar protection without OAuth.
 
 ## TASKS.md format (in the target repo)
 

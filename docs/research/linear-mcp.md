@@ -47,7 +47,7 @@ Other tools exist (documents, cycles, releases, diffs, attachments, notification
 
 ### Observations later tasks should know
 
-- There is no delete tool for issues or comments in the server's tool list. The `deny` entries `delete_comment`, `delete_attachment`, `delete_status_update`, `delete_diff_comment` in `.claude/settings.json` name tools that do not exist; harmless, but they do not protect anything. The real risk is `save_issue` and `save_comment` with an `id` (overwrites), and the `retire_*` label tools.
+- Correction (2026-11-03): the `delete_comment`, `delete_attachment`, `delete_status_update` and `delete_diff_comment` tools do exist in an interactive session's tool list, so the `deny` entries for them in `.claude/settings.json` are live protection, not dead rules. The headless task session's list may have differed. The remaining real risk is `save_issue` and `save_comment` with an `id` (they overwrite), which are allowed on purpose, and the `retire_*` label tools, which are not in the allow list.
 - Because `save_issue` is create-or-edit, allowing it lets a session rewrite any issue in the real workspace, not just ones nightlight made. Mitigation has to be in prompts and by always reading before writing.
 - Headless runs print many `Permission allow/deny rule ... mixes * with the trailing :* prefix` warnings from `.claude/settings.json` (`Bash(git -C * add:*)` and similar). They are stderr noise, but they also say those rules "will likely never match", so the `git -C` allows are probably not working. Separate cleanup, not done here.
 - `--allowedTools` is variadic and swallows a positional prompt; pass the prompt on stdin.
@@ -66,7 +66,7 @@ Recommendation, not decision:
 - Does the token survive multi-day idle and refresh cleanly? Only a real overnight run can show it.
 - Do parallel `claude -p` launches race on token refresh? Dispatch is sequential today, so likely moot.
 - Exact response shape (issue identifiers, cursor format) was not captured; the next task should record one sample of `list_issues` with `fields`.
-- Should the dead `delete_*` deny entries be removed or replaced with `retire_*` denies?
+- Should `retire_issue_label` and `retire_project_label` also be denied? They are not in the allow list, so headless runs cannot call them anyway; a deny would only be belt and braces.
 
 ## Sources
 
