@@ -19,6 +19,17 @@ ts_linear_label() {
   jq -r --arg k "$key" --arg d "$default" '.[$k] // $d' <<< "${TS_LABELS_JSON:-{\}}"
 }
 
+# Prints "<variable type>\t<team filter>" for $TS_LINEAR_TEAM_ID. A UUID filters
+# on the team's id, whose comparator is typed ID; a team key (ENG) filters on
+# key, typed String. Declaring $team with the wrong type is a GraphQL error.
+ts_linear_team_filter() {
+  if [[ "$TS_LINEAR_TEAM_ID" =~ ^[0-9a-fA-F-]{36}$ ]]; then
+    printf '%s\t%s' 'ID!' '{id: {eq: $team}}'
+  else
+    printf '%s\t%s' 'String!' '{key: {eq: $team}}'
+  fi
+}
+
 # POSTs a GraphQL query ($1) with variables JSON ($2) and prints the response
 # body. Fails on HTTP errors and on a GraphQL "errors" array.
 ts_linear_gql() {
@@ -48,9 +59,9 @@ ts_linear_fetch() {
   sections="$(jq -cn --arg a "$(ts_linear_label agentReady nl:agent-ready)" \
     --arg v "$(ts_linear_label verify nl:verify)" --arg r "$(ts_linear_label research nl:research)" '[$a, $v, $r]')"
 
-  local team_filter='{key: {eq: $team}}'
-  [[ "$TS_LINEAR_TEAM_ID" =~ ^[0-9a-fA-F-]{36}$ ]] && team_filter='{id: {eq: $team}}'
-  local query='query($team: String!, $labels: [String!], $after: String) {
+  local team_type team_filter
+  IFS=$'\t' read -r team_type team_filter < <(ts_linear_team_filter)
+  local query='query($team: '"$team_type"', $labels: [String!], $after: String) {
     issues(first: 100, after: $after, orderBy: createdAt, filter: {
       team: '"$team_filter"',
       state: {type: {nin: ["completed", "canceled"]}},
@@ -135,9 +146,9 @@ ts_task_result_re() {
 ts_find_related() {
   local query="$2"
   [[ -n "${LINEAR_API_KEY:-}" ]] || { echo "error: LINEAR_API_KEY is not set" >&2; return 1; }
-  local team_filter='{key: {eq: $team}}'
-  [[ "$TS_LINEAR_TEAM_ID" =~ ^[0-9a-fA-F-]{36}$ ]] && team_filter='{id: {eq: $team}}'
-  local gql='query($team: String!, $q: String!) {
+  local team_type team_filter
+  IFS=$'\t' read -r team_type team_filter < <(ts_linear_team_filter)
+  local gql='query($team: '"$team_type"', $q: String!) {
     issues(first: 30, orderBy: updatedAt, filter: {
       team: '"$team_filter"',
       or: [{title: {containsIgnoreCase: $q}}, {description: {containsIgnoreCase: $q}}]
