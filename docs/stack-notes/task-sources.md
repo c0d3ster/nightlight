@@ -123,6 +123,7 @@ Branch: overnight/2026-11-02/r1-03-t24-linear-task-source-module
 - Auth header is the raw key (Linear personal keys take no `Bearer`). `TS_LINEAR_URL` is overridable for tests.
 - `--stop-after` error already comes from `run_repo()` checking `TS_NUMERIC_IDS != 1`; no change needed there.
 - Deviation: comments are all included (Linear has no author-association field; only workspace members can comment). Tested only against a mocked `curl`, never live.
+- Post-merge fix (found by the first live `migrate --to linear` run): both queries declared `$team` as `String!`, which Linear rejects for the UUID form (`id: {eq: $team}` is typed `ID`). `ts_linear_team_filter` now picks `ID!` for a UUID and `String!` for a team key. The offline stub test used the key form and missed it; checked live, read-only, against the real team in both forms.
 
 ## #25 Linear housekeeping and skill write paths via MCP
 
