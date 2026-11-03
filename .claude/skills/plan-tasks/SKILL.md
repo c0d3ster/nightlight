@@ -23,6 +23,10 @@ Per attached repo, read `taskSource` from its `docs/nightlight-meta.json` (missi
   - Synthesize step 2 (assign `#<n>`): skipped, the issue number is the id. Stack names are still per repo.
   - Synthesize write: after approval, create any missing section or `nl:stack:<name>` label (`gh` rejects labels that don't exist: `gh label create <name> --repo <repo>`), then apply labels with `gh issue edit <n> --add-label <section>,nl:stack:<name> --remove-label nl:discovered` (labels come from the repo's `labels` block, defaults `nl:agent-ready`/`nl:verify`/`nl:research`/`nl:decision`, stack prefix `nl:stack:`). Breakdowns go in as an issue comment (`gh issue comment`). Position: issue number is the order, so skip the position question.
   - Finalize: skipped entirely. The write landed on approval; report the issue URLs instead.
+- `linear` (remote): same as `github` (never touch TASKS.md, no chore PR, Finalize skipped, no position question), except the tracker is the repo's Linear team (`linear.teamId`) and every read and write goes through the Linear MCP tools, never `gh issue` or `gh label`. Deltas:
+  - Items: the team's open issues labeled `nl:discovered` (`list_issues` filtered by team and label), plus any open `nl:*`-sectioned issues I name. An item's id is the Linear identifier (`ENG-142`); there is no `#<n>` to assign.
+  - Synthesize write: after approval, create any missing section or `nl:stack:<name>` label (`list_issue_labels`, then `create_issue_label`), then `save_issue` with the new label set. `save_issue` replaces the whole label list, so read the issue's current labels first, resend the ones you keep, add the section and stack labels, and drop `nl:discovered`. Breakdowns go in as `save_comment`.
+  - Dedupe actions: "reopen" is `save_issue` to an unstarted status (`list_issue_statuses` for the team's names), "link as follow-up" is `save_comment` on the related issue; the code check is the same `task-scout` verify mode.
 
 ## Dedupe (every mode)
 

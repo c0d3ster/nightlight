@@ -25,6 +25,10 @@ Per repo (in multi-repo mode, each subdirectory), read `taskSource` from its `do
   - Phase 2 step 2: dedupe through the Dedupe section below instead of TASKS.md and `docs/tasks-archive/`.
   - Phase 3: after approval, create `nl:discovered` if the repo lacks it (`gh` rejects labels that don't exist: `gh label create nl:discovered --repo <repo>`), then for each approved candidate run `gh issue create --repo <github.repo or origin> --title "<task text>" --body "<rationale, source>" --label nl:discovered` (label name from the repo's `labels.discovered` if set). Memory-sourced items still get their source memory file and MEMORY.md line deleted (step 3), but that is a local memory edit, not a commit. Announce "Done - N issue(s) created, N memory file(s) cleared."
   - Phase 4: skipped entirely. Report the created issue URLs instead.
+- `linear` (remote): same deltas as `github`, but the tracker is the repo's Linear team (`linear.teamId`) and every write goes through the Linear MCP tools, never `gh issue` or `gh label`:
+  - Phase 2 step 2: dedupe through the Dedupe section below. "Reopen" is `save_issue` to an unstarted status (`list_issue_statuses`), "link as follow-up" is `save_comment` on the related issue.
+  - Phase 3: after approval, create `nl:discovered` if the team lacks it (`list_issue_labels`, then `create_issue_label`), then `save_issue` to create one issue per approved candidate with the task text as the title, the rationale and source as the description, and the `nl:discovered` label (name from `labels.discovered` if set). Memory-sourced items still get their source memory file and MEMORY.md line deleted (step 3). Announce "Done - N issue(s) created, N memory file(s) cleared."
+  - Phase 4: skipped entirely. Report the created issue URLs instead.
 
 ## Dedupe (every mode)
 
