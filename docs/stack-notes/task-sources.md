@@ -139,5 +139,5 @@ Branch: overnight/2026-11-02/r1-04-t25-linear-write-paths
 
 Branch: overnight/2026-11-02/r1-05-t26-linear-permissions-docs
 
-- `.claude/settings.json`: allow `mcp__linear__` `list_issues`, `get_issue`, `list_comments`, `list_issue_labels`, `list_issue_statuses`, `save_issue`, `save_comment`, `create_issue_label` (exactly the tools the Linear prompts name). Deny `delete_comment`, `delete_attachment`, `delete_diff_comment`, `delete_status_update`. No server-level allow.
+- `.claude/settings.json`: the narrow Linear allow entries and the `delete_*` denies landed separately in PR #89 (a superset: `whoami`, `list_teams`, `get_team`, `list_projects`, `list_milestones` were added for the preflight and milestone work), so this PR has no settings change.
 - CLAUDE.md: new "Linear mode" section after GitHub mode. README: new "Linear task source" section (config, `gh auth login`, key resolution order, `claude mcp add`, `gh` still required, Linear's GitHub integration not needed). Local and GitHub text untouched.
