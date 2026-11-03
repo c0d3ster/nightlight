@@ -55,7 +55,7 @@ Opt-in per target repo via `docs/nightlight-meta.json`; local `TASKS.md` mode st
 
 Opt-in per target repo via `docs/nightlight-meta.json`; builds on GitHub mode, so only the differences are listed.
 
-- Tasks are open issues on one Linear team carrying the same `nl:*` labels. Task ids are Linear identifiers (`ENG-142`, bare in `TASK_RESULT`), so `--stop-after` is rejected.
+- Tasks are open issues on one Linear team carrying the same `nl:*` labels. One Linear team per repo is the supported setup: the module scopes only by `linear.teamId` and the labels, so repos sharing a team would dispatch each other's issues and `migrate` dedupe would match across repos. Task ids are Linear identifiers (`ENG-142`, bare in `TASK_RESULT`), so `--stop-after` is rejected.
 - Listing runs in bash via `curl` against Linear's GraphQL API, authenticated with `LINEAR_API_KEY`. Resolution order: the target repo's `.env.local`, `.env.*.local`, `.env.*`, `.env`, then nightlight's own `.env`; first match wins, only that one key is extracted.
 - Every tracker write (labels, comments, Done) happens in the `claude -p` subprocess through the Linear MCP server (`mcp__linear__*`), never `gh issue`. `gh` is still required for task PRs, branch and PR checks, and housekeeping's merge-state checks; only `gh issue` / `gh label` calls go away.
 - Permissions: `.claude/settings.json` allows only the specific `mcp__linear__` tools the prompts use and denies the delete tools. No server-level MCP allow.
