@@ -108,7 +108,7 @@ Branch: overnight/2026-11-02/r2-01-t22-linear-mcp-gate
 
 Branch: overnight/2026-11-02/r1-02-t23-linear-mcp-json-key-resolver
 
-- Added `lib/linear-key.sh` with `resolve_linear_key <repo_path>`: greps only `^LINEAR_API_KEY=` (never sources) from `.env.local`, `.env.*.local`, `.env.*`, `.env` in the target, then nightlight's `.env`. First match wins; strips quotes and CR. Exports `LINEAR_API_KEY`; warns when the source file is tracked (`git ls-files --error-unmatch`); returns 1 with an error if none found.
-- `lib/task-source.sh` sources it and calls it in the `linear` branch of `load_task_source`, before the module check. The agent-side `Read(.env)` / `Read(.env.*)` deny is untouched.
+- Added `lib/env.sh` with `env_get VAR DIR...`: prints the first value of VAR found in the env files of the first DIR that has one, reading one line with `sed` and never sourcing. Gitignored files (per `git check-ignore`) are tried before the rest, each group in the order `.env.local`, `.env.*.local`, `.env.*`, `.env`. Templates (`.example`, `.sample`, `.template`, `.dist`) are skipped, quotes and CR are stripped, and it warns on stderr when the value comes from a file that is not gitignored. Reusable for any env var.
+- `lib/task-source.sh` sources it and, in the `linear` branch of `load_task_source`, runs `env_get LINEAR_API_KEY <target> .` (target repo first, then nightlight's own dir) and exports the result; it errors if none is found. The agent-side `Read(.env)` / `Read(.env.*)` deny is untouched.
 - Deviation: `.mcp.json` was NOT created. The harness blocked writes to it as a sensitive file. Needs human: create `.mcp.json` at the repo root with `{"mcpServers":{"linear":{"type":"http","url":"https://mcp.linear.app/mcp"}}}`.
-- Deviation: behavioral tests of the resolver were denied in the session; only `bash -n` syntax checks ran.
+- Verified by hand in scratch repos: key in an ignored `.env.local`, template-only (rejected), tracked-only (warns), nightlight fallback, and absent (error).
