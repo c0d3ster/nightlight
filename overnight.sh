@@ -507,6 +507,12 @@ This task is GitHub issue \`#$num\`; the text above is a synthesized snapshot. R
 This task is Linear issue \`$num\`; the text above is a synthesized snapshot. Read full detail and comments with the Linear MCP tools (get_issue, list_comments). Reference the issue as \`$num\` in backticks in the PR body, never use a closing keyword or Linear magic word (closing is housekeeping's job), never edit the issue, and never set status labels (nl:blocked, nl:needs-human) yourself; report status via TASK_RESULT only."
   fi
 
+  if [[ -d "${repo_path:-}/.claude" ]]; then
+    p="$p
+
+Files under .claude/ (skills, agents, commands) cannot be changed with the Edit or Write tools in this permission mode, and helper scripts written outside the repo are denied too. Change them with one inline Bash command that rewrites the file in place, for example \`python - <<'EOF' ... EOF\` or \`node -e\`. Do not modify .claude/settings.json or .claude/settings.local.json (a task must not grant itself permissions): report any permission change you need as a NEEDS HUMAN step with the exact entries in the PR description."
+  fi
+
   if [[ -n "$retried" ]]; then
     p="$p
 
