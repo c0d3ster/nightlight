@@ -6,7 +6,8 @@ This is nightlight working on itself: the target repo for these tasks is the nig
 
 ## Agent-Ready
 
-- [ ] #34 [stack: migrate-tasks] **Make `/migrate-tasks` carry Decisions and Discovered items over**
+- [/] #34 [stack: migrate-tasks] **Make `/migrate-tasks` carry Decisions and Discovered items over**
+  NEEDS HUMAN (PR #100, code-complete): add the `git rm` allow entries from the PR description to `.claude/settings.json`, then run `pnpm migrate c0d3ster --to linear` to verify.
   Today the skill says Decisions and Discovered "are never migrated; mention them as left behind", so a migrated repo (c0d3ster still has Decisions `#12` and `#13`) keeps a `TASKS.md` forever. Carry both over for `--to github` and `--to linear`, so `TASKS.md` can be removed after a migration.
   - Setup (both modes): count open Decisions and Discovered items in the "open items decide" guard, so a repo with only Decisions left still migrates. Read the `decision` and `discovered` labels (defaults `nl:decision`, `nl:discovered`) via `ts_gh_label` / `ts_linear_label`.
   - Phase 1: stop skipping the two sections. Decisions use the existing `Migrated from TASKS.md #<n> (` marker; Discovered items have no `#<n>`, so use `Migrated from TASKS.md discovered:<8-char sha1 of normalized item text> (`. Skip the merged-PR/branch check for these sections (no task branches). A checked `[x]` Decisions item is archived like any other checked item.
