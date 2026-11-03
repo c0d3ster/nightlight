@@ -13,3 +13,17 @@ Branch: overnight/2026-11-03/r2-01-t34-migrate-decisions-discovered
 
 ### Deviations
 - `.claude/settings.json` untouched. NEEDS HUMAN: allow `Bash(git rm TASKS.md)` and `Bash(git -C * rm TASKS.md)` (narrowest form that covers the skill), then run `pnpm migrate c0d3ster --to linear` to confirm only Decisions `#13` is created (`#12` was already archived as done in c0d3ster).
+
+## #35 Ask for a separate merge confirmation in `/migrate-tasks` Phase 4
+
+Branch: overnight/2026-11-03/r2-02-t35-migrate-merge-confirmation
+
+### Decisions
+- Step 1's yes now covers only flip + open PR. Step 6 shows the PR URL and a diff summary (stat, archive contents, TASKS.md removals, meta change). Step 7 asks "merge now?" separately; only an explicit yes merges, anything else (including no answer) leaves the PR open with its URL reported. Linear bullet inherits this.
+- `migrate.sh` launches an interactive `claude "<prompt>"` (no `-p`), so no change needed there; README has no auto-merge wording for migrate (its merge text covers discover/plan only).
+
+### Interfaces
+- Only `.claude/skills/migrate-tasks/SKILL.md` text changed.
+
+### Deviations
+- None.
