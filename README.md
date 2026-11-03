@@ -258,6 +258,8 @@ Local `TASKS.md` and GitHub issues are unchanged. To use a Linear team as the wo
 
 `linear.teamId` is a team key or UUID. `labels` overrides work as in GitHub mode. Tasks are open issues on that team with a section label; their ids are Linear identifiers like `ENG-142`, so `--stop-after` is not available (`--limit` and `--stack` work).
 
+**One Linear team per repo.** This is the supported setup. The Linear module scopes only by `linear.teamId` and the `nl:*` labels, so two repos sharing a team would each dispatch the other's labeled issues, and `pnpm migrate <repo> --to linear` dedupe would match across repos. A team per repo, inside one workspace, gives each repo its own issue prefix, statuses, and cycles, and needs no second API key or MCP sign-in (the MCP connects to one workspace at a time). A Linear Project, if one is used later to group stack milestones, lives inside that repo's team; the team is the unit of isolation.
+
 One-time setup:
 
 1. **GitHub CLI.** `gh` is still required in Linear mode: task PRs, branch and PR checks, and housekeeping's merge-state checks all use it. Only the `gh issue` / `gh label` calls go away. Run `gh auth login` once and confirm with `gh auth status`.
@@ -266,7 +268,7 @@ One-time setup:
 
 Bash lists tasks through Linear's GraphQL API with the key. Everything the agent does to issues (read, label, comment, close) goes through the MCP server. Linear's optional GitHub integration is separate and not needed.
 
-Permissions: `.claude/settings.json` allows only `mcp__linear__` `list_issues`, `get_issue`, `list_comments`, `list_issue_labels`, `list_issue_statuses`, `save_issue`, `save_comment`, and `create_issue_label`, and denies `delete_comment`, `delete_attachment`, `delete_diff_comment`, and `delete_status_update`. There is no server-level MCP allow.
+Permissions: `.claude/settings.json` allows only `mcp__linear__` `whoami`, `list_teams`, `get_team`, `list_issues`, `get_issue`, `list_comments`, `list_issue_labels`, `list_issue_statuses`, `list_projects`, `list_milestones`, `save_issue`, `save_comment`, and `create_issue_label`, and denies `delete_comment`, `delete_attachment`, `delete_diff_comment`, and `delete_status_update`. There is no server-level MCP allow.
 
 ## TASKS.md format (in the target repo)
 
