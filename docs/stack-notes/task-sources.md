@@ -93,3 +93,13 @@ Branch: overnight/2026-10-20/r2-09-t32-migrate-tasks-to-github
 - `.claude/settings.json`: allow `gh label create`, push and merge for `chore/tasks-migrate-*`.
 - Interfaces: `migrate.sh`, `/migrate-tasks` skill.
 - Deviation: not exercised live against GitHub. Decisions and Discovered sections are left in TASKS.md rather than migrated. A wording slip in SKILL.md's label line (Phase 2 step 2) could not be fixed because the edit was permission-blocked.
+
+## #22 Linear OAuth-persistence gate and MCP tool inventory
+
+Branch: overnight/2026-11-02/r2-01-t22-linear-mcp-gate
+
+- Persistence PASS: 7 independent `claude -p` launches (6 with explicit `--allowedTools`, 1 relying on `.claude/settings.json`) called `whoami`/`list_teams` with no re-prompt. Read-only calls only. Long-term refresh not proven.
+- Deliverable: `docs/research/linear-mcp.md` with real tool names and params. Existing allow entries already cover everything needed, so no settings change.
+- Findings: no delete tools exist in the server, so the `delete_*` deny entries are dead; `save_issue` is create-or-edit; `--allowedTools` swallows a positional prompt (use stdin); settings emit `git -C * ...:*` rule warnings.
+- Recommendation: `whoami` preflight in `overnight.sh` for Linear mode; allow `save_project`/`save_milestone` only when needed.
+- Deviation: none; docs only.
