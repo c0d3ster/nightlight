@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Shared task-source loader, sourced by overnight.sh and plan.sh (cwd must be the nightlight checkout).
-source lib/linear-key.sh
+source lib/env.sh
 
 # Reads taskSource and its config blocks from $1 (repo path)'s
 # docs/nightlight-meta.json, then sources lib/task-source-<name>.sh. Missing
@@ -24,7 +24,8 @@ load_task_source() {
     linear)
       TS_LINEAR_TEAM_ID="$(jq -r '.linear.teamId // empty' "$meta")"
       [[ -n "$TS_LINEAR_TEAM_ID" ]] || { echo "error: taskSource is \"linear\" but linear.teamId is missing in $meta"; return 1; }
-      resolve_linear_key "$repo_path" || return 1
+      LINEAR_API_KEY="$(env_get LINEAR_API_KEY "$repo_path" .)" || { echo "error: LINEAR_API_KEY not found in $repo_path env files or nightlight's own"; return 1; }
+      export LINEAR_API_KEY
       ;;
     *) echo "error: unknown taskSource \"$TASK_SOURCE\" in $meta (expected local, github, or linear)"; return 1 ;;
   esac

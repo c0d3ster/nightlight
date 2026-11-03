@@ -2,7 +2,7 @@
 # Linear task source: tasks are open issues on one team carrying an nl:* section
 # label. Sourced by overnight.sh's run_repo(); see docs/plans/multi-task-source.md
 # Phase 3 for the design and the ts_* contract in Phase 1.2. Needs LINEAR_API_KEY
-# (lib/linear-key.sh) and TS_LINEAR_TEAM_ID (team key like ENG, or a team UUID).
+# (resolved with env_get in lib/env.sh) and TS_LINEAR_TEAM_ID (team key like ENG, or a team UUID).
 
 # Ids are Linear identifiers (ENG-142), so --stop-after is rejected.
 TS_NUMERIC_IDS=0
