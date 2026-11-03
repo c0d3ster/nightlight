@@ -347,17 +347,18 @@ find_orphan_branches() {
   local re="^overnight/[0-9]{4}-[0-9]{2}-[0-9]{2}/r[0-9]+-[0-9]+-t$num-"
   local b pr_count
   while IFS= read -r b; do
-    [[ "$b" =~ $re ]] || continue
+    [[ "${b,,}" =~ ${re,,} ]] || continue
     pr_count="$(cd "$repo_path" && gh pr list --head "$b" --state all --json number --jq length 2>/dev/null)" || continue
     [[ "$pr_count" == "0" ]] && echo "$b"
   done < <(git -C "$repo_path" for-each-ref --format='%(refname:short)' refs/heads/overnight refs/remotes/origin/overnight | sed 's#^origin/##' | sort -u)
 }
 
-# GitHub mode only: an issue stays open until its task PR merges, so a task
-# whose PR already exists (open, merged, or closed unmerged) must not be
+# GitHub and Linear modes: an issue stays open until its task PR merges, so a
+# task whose PR already exists (open, merged, or closed unmerged) must not be
 # dispatched again. Prints "<state> #<pr>" for $2's PR (open or merged ones win
-# over closed), nothing if it has none. One gh call per run, cached in
-# TASK_PR_CACHE; returns 1 if gh can't answer.
+# over closed), nothing if it has none. The match is case-insensitive because a
+# session may lowercase a Linear identifier in its branch name. One gh call per
+# run, cached in TASK_PR_CACHE; returns 1 if gh can't answer.
 TASK_PR_CACHE=""
 find_task_pr() {
   local repo_path="$1" num="$2"
@@ -366,7 +367,7 @@ find_task_pr() {
       || { TASK_PR_CACHE=""; return 1; }
   fi
   jq -r --arg re "^overnight/[0-9]{4}-[0-9]{2}-[0-9]{2}/r[0-9]+-[0-9]+-t$num-" '
-    [.[] | select(.headRefName | test($re))]
+    [.[] | select(.headRefName | test($re; "i"))]
     | (map(select(.state != "CLOSED")) + map(select(.state == "CLOSED"))) | first // empty
     | "\(.state | ascii_downcase) #\(.number)"' <<< "$TASK_PR_CACHE"
 }
@@ -1039,7 +1040,7 @@ run_repo() {
       continue
     fi
 
-    if [[ "$TASK_SOURCE" == github ]]; then
+    if [[ "$TASK_SOURCE" == github || "$TASK_SOURCE" == linear ]]; then
       local existing_pr
       if ! existing_pr="$(find_task_pr "$repo_path" "$num")"; then
         echo "warn: can't list PRs, skipping task #$num rather than risk a duplicate"
