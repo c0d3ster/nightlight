@@ -46,7 +46,12 @@
       "Bash(git branch -D overnight/*)",
       "Bash(gh pr merge chore/tasks-discover-*:*)",
       "Bash(gh pr merge chore/tasks-plan-*:*)",
-      "Bash(gh pr merge chore/tasks-migrate-*:*)"
+      "Bash(gh pr merge chore/tasks-migrate-*:*)",
+      "mcp__linear__whoami",
+      "mcp__linear__list_teams",
+      "mcp__linear__get_team",
+      "mcp__linear__list_issues",
+      "mcp__linear__get_issue"
     ],
     "deny": [
       "Bash(git push origin main:*)",
