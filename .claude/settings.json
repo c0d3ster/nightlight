@@ -2,6 +2,7 @@
   "permissions": {
     "allow": [
       "Edit",
+      "Bash(bash lib/stack-notes.sh:*)",
       "Bash(npm test:*)",
       "Bash(npm run test:*)",
       "Bash(npm run lint:*)",
