@@ -6,29 +6,6 @@ This is nightlight working on itself: the target repo for these tasks is the nig
 
 ## Agent-Ready
 
-- [ ] #34 [stack: migrate-tasks] **Make `/migrate-tasks` carry Decisions and Discovered items over**
-  Today the skill says Decisions and Discovered "are never migrated; mention them as left behind", so a migrated repo (c0d3ster still has Decisions `#12` and `#13`) keeps a `TASKS.md` forever. Carry both over for `--to github` and `--to linear`, so `TASKS.md` can be removed after a migration.
-  - Setup (both modes): count open Decisions and Discovered items in the "open items decide" guard, so a repo with only Decisions left still migrates. Read the `decision` and `discovered` labels (defaults `nl:decision`, `nl:discovered`) via `ts_gh_label` / `ts_linear_label`.
-  - Phase 1: stop skipping the two sections. Decisions use the existing `Migrated from TASKS.md #<n> (` marker; Discovered items have no `#<n>`, so use `Migrated from TASKS.md discovered:<8-char sha1 of normalized item text> (`. Skip the merged-PR/branch check for these sections (no task branches). A checked `[x]` Decisions item is archived like any other checked item.
-  - Phase 2: a Decisions item gets only `nl:decision` (no section label, no stack, so neither source dispatches it); a Discovered item gets only `nl:discovered` (what remote-mode `/discover-tasks` creates and `/plan-tasks` triages). Same dedupe, per-item approval, and missing-label creation as other items; Linear mode uses `save_issue` with the same labels and markers.
-  - Phase 4: the `<date>-migrated.md` archive gets Decisions and Discovered headings with issue ids. `git rm TASKS.md` entirely when nothing remains (every item is an issue, archived, or explicitly skipped by the human); if any item was skipped, keep the file. Update the staging list, the gating sentence, and the skill's frontmatter description.
-  - Do NOT edit `.claude/settings.json` (a task must not grant itself permissions). The skill now needs `Bash(git rm:*)` and `Bash(git -C * rm:*)` allowed, as narrowly as possible; put those exact entries in the PR description as a NEEDS HUMAN step.
-  - `plan-tasks` SKILL.md remote-mode Items bullets: say `nl:decision` issues are listed for visibility but human-only, never triaged or dispatched.
-  - README: add `nl:decision` and the `decision`/`discovered` override keys to the labels docs; add a note to "TASKS.md format" that remote sources have no `TASKS.md`; fix any migrate text saying these sections are left behind.
-  - Verify `overnight.sh` and `lib/task-source-*.sh` never dispatch `nl:decision` or `nl:discovered` issues (listers select by section label only).
-
-  Acceptance criteria: a migrated repo's Decisions and Discovered items become `nl:decision` / `nl:discovered` issues with idempotency markers, and `TASKS.md` is removed when nothing remains. NEEDS HUMAN after merge: add the `git rm` allow entries from the PR description to `.claude/settings.json`, then run `pnpm migrate c0d3ster --to linear` and confirm it creates only Decisions `#12` and `#13` without duplicating the three already migrated (testable only against the real workspace).
-
-- [ ] #35 [stack: migrate-tasks] **Ask for a separate merge confirmation in `/migrate-tasks` Phase 4**
-  Step 1 asks before the PR or its diff exist, and step 7 then merges with `gh pr merge <branch> --rebase --delete-branch` on that answer. The first live Linear migration (c0d3ster, PR #110) nearly merged with a problem in a migrated Discovered item that the human only caught by stopping it by hand.
-  - Step 1: reword so the yes covers only "flip and open the PR", not the merge.
-  - Step 6: after `gh pr create`, show the PR URL and a diff summary: files changed, the archive file's contents, the `TASKS.md` removals, the meta change.
-  - Step 7: ask "merge now?" as its own question. Only an explicit yes runs the merge; anything else leaves the PR open and reports it with the URL. Keep leaving the PR open when the merge fails (required reviews or checks), and the checkout-default-and-pull on success. Remove the "safe because approved above" justification.
-  - Linear Phase 4 bullet: reword so it inherits the separate confirmation. Applies to both `--to github` and `--to linear`.
-  - Check how `migrate.sh` invokes the skill: a non-interactive run with no answer counts as "no", so the PR stays open. Check the README for wording that describes auto-merge.
-
-  Acceptance criteria: migrate never merges without an explicit "merge now?" yes given after the diff summary is shown.
-
 - [ ] #11 [stack: solo] **Make DB schema/migration generation NEEDS HUMAN**
   When a task's acceptance criteria require a schema change, the agent currently generates the migration, spins up the dev server, runs codegen, verifies the output, then tears the server down — a measurable, avoidable turn cost (confirmed 2026-08-06, c0d3ster: ~7 extra Bash round-trips per migration-touching task, incurred twice in one session). Change the rule: the agent edits the schema/model file(s) only, then stops — no generate step, no dev server, no codegen — and records the change as NEEDS HUMAN with the exact follow-up commands (generate migration, review generated SQL, start dev server + run codegen, review generated types, apply migration). Applies to any ORM/migration tool, not just Drizzle — this lives in the shared Overnight Agent Workflow section, used across repos with different stacks.
 
