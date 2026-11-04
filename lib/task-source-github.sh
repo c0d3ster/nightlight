@@ -112,3 +112,49 @@ ts_find_related() {
     --json number,title,state \
     --jq '.[] | "\(.state | ascii_downcase)\t#\(.number)\t\(.title)"'
 }
+
+# Prints "<number> <state>" for the milestone titled $1 (any state), or nothing.
+# Title equals the stack name.
+ts_gh_milestone_lookup() {
+  local title="$1"
+  gh api "repos/$TS_GITHUB_REPO/milestones?state=all&per_page=100" --paginate 2>/dev/null \
+    | jq -r --arg t "$title" '.[] | select(.title == $t) | "\(.number) \(.state)"' | head -n1
+}
+
+# Ensures an open milestone titled after stack $2 exists: creates it (with
+# description $3) if missing, reopens it if closed. No-op for solo. Idempotent.
+# The nl:stack label is authoritative for dispatch, so a gh failure warns and
+# returns 0.
+ts_ensure_group() {
+  local repo_path="$1" stack="$2" desc="${3:-}"
+  [[ -z "$stack" || "$stack" == "solo" ]] && return 0
+  ts_gh_resolve_repo "$repo_path" || return 0
+  local found num state
+  found="$(ts_gh_milestone_lookup "$stack")"
+  if [[ -z "$found" ]]; then
+    gh api -X POST "repos/$TS_GITHUB_REPO/milestones" -f title="$stack" -f description="$desc" >/dev/null 2>&1 \
+      || echo "warning: couldn't create milestone \"$stack\"; continuing (the label is authoritative)" >&2
+    return 0
+  fi
+  read -r num state <<< "$found"
+  [[ "$state" == "open" ]] && return 0
+  gh api -X PATCH "repos/$TS_GITHUB_REPO/milestones/$num" -f state=open >/dev/null 2>&1 \
+    || echo "warning: couldn't reopen milestone \"$stack\"; continuing (the label is authoritative)" >&2
+  return 0
+}
+
+# Closes the milestone titled after stack $2. No-op for solo, a missing
+# milestone, or one already closed. Idempotent; failures warn and return 0.
+ts_close_group() {
+  local repo_path="$1" stack="$2"
+  [[ -z "$stack" || "$stack" == "solo" ]] && return 0
+  ts_gh_resolve_repo "$repo_path" || return 0
+  local found num state
+  found="$(ts_gh_milestone_lookup "$stack")"
+  [[ -z "$found" ]] && return 0
+  read -r num state <<< "$found"
+  [[ "$state" == "closed" ]] && return 0
+  gh api -X PATCH "repos/$TS_GITHUB_REPO/milestones/$num" -f state=closed >/dev/null 2>&1 \
+    || echo "warning: couldn't close milestone \"$stack\"; continuing (the label is authoritative)" >&2
+  return 0
+}
