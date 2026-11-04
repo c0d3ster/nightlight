@@ -1,294 +1,106 @@
 # nightlight
 
-Leave a light on while you sleep. Runs unattended Claude Code sessions against a repo's `TASKS.md`, opens the work as reviewable PRs, never touches `main` directly.
+Leave a light on while you sleep. Runs unattended Claude Code sessions against a repo's task list, opens the work as reviewable PRs, never touches `main` directly.
 
-This repo holds the runner and its config — nothing else. No dependencies, no dashboard, no daemon watching your usage window. It never copies anything into the repos it works on either — it reaches into them with `--add-dir` for the duration of one session and leaves nothing behind. Point it at any repo with a `TASKS.md` and it works the same way, which is what makes it portable rather than tied to one project.
+This repo holds the runner and its config, nothing else. No dependencies, no dashboard, no daemon. It reaches into target repos with `--add-dir` for one session and leaves nothing behind, so it works the same on any repo with a task list.
 
 ## How it works
 
-- `overnight.sh` points at a target repo, checks it has a `TASKS.md`, and dispatches one fresh `claude -p` subprocess per open task (plus one more for end-of-run housekeeping) with `--add-dir <target-repo>` — not one continuous session across the whole run. Each task subprocess starts with no memory of any other task, so context (and cache-read cost) stays bounded by one task's own work instead of compounding across every task in the run.
-- Because every subprocess is launched from *this* repo, its `CLAUDE.md` (the workflow rules), `.claude/settings.json` (the permission allowlist), and `.claude/skills/plan-tasks/` (the `/plan-tasks` skill) all apply — regardless of which repo got added.
-- The target repo's own `CLAUDE.md` stays exactly what it'd be without this system: test command, code conventions. No overnight-specific content ever gets written into it.
-- Stacked tasks (sharing a `[stack: <name>]` other than `solo`) still need each other's context. Each stack keeps a `docs/stack-notes/<stack>.md` in the target repo — the first task in a stack creates it, each later one appends its own entry (decisions, interfaces, deviations) — and `overnight.sh` feeds a stacked task's prompt the latest entry from that file (plus the headings of older ones) instead of a raw diff or commit dump. Each task subprocess reports back a one-line `TASK_RESULT: #<n> status=... branch=... pr=...`, which `overnight.sh` collects and hands to the housekeeping subprocess as its starting point (housekeeping still confirms real PR/branch state via `git`/`gh` before trusting it). Once every PR in a stack has merged and no tasks or open PRs remain for it, housekeeping `git rm`s the notes file in its PR (history keeps it); a stack resumed later recreates the file.
-- The agent works entirely on `overnight/<date>/*` branches, opens a PR per task, and a single housekeeping PR at the end updates `TASKS.md`, the archive, and `docs/nightlight-meta.json`. Nothing else touches those three things.
+- `overnight.sh` dispatches one fresh `claude -p` subprocess per open task (plus one for end-of-run housekeeping) with `--add-dir <target-repo>`. Each task starts with no memory of the others, so cost stays bounded by one task's work.
+- Every subprocess launches from *this* repo, so its `CLAUDE.md` (workflow rules), `.claude/settings.json` (permission allowlist), and `.claude/skills/` apply no matter which repo was added. The target's own `CLAUDE.md` is never modified.
+- Stacked tasks (same `[stack: <name>]`, other than `solo`) share context through `docs/stack-notes/<stack>.md` in the target repo. Each task appends an entry, and a later task's prompt gets only the latest one. Housekeeping removes the file once the stack's PRs have all merged.
+- Each task ends with a `TASK_RESULT: #<n> status=... branch=... pr=...` line. Housekeeping receives these, confirms real state via `git`/`gh`, then opens the one PR that updates the task list, archive, and `docs/nightlight-meta.json`.
+- All work lands on `overnight/<date>/*` branches, one PR per task. `CLAUDE.md` has the full workflow rules.
 
 ## Requirements
 
-- Bash 4.3+ (for `local -n` namerefs and `local -A` associative arrays, both used by `overnight.sh`) — the default on Linux and modern Git Bash/WSL; macOS ships 3.2, so install a newer Bash via Homebrew (`brew install bash`) and make sure it's the one on `PATH` before running these scripts.
+- Bash 4.3+ (namerefs and associative arrays). macOS ships 3.2, so `brew install bash` and put it first on `PATH`.
 - [Claude Code](https://docs.claude.com/en/docs/claude-code) CLI, logged in.
-- [pnpm](https://pnpm.io) — used only as a task runner here (`pnpm nightlight`, `pnpm plan`, `pnpm overnight`), no actual dependencies to install.
-- Git, GitHub CLI (`gh`) authenticated for the target repo.
-- [`jq`](https://jqlang.org) — formats the live session output (see Usage below). Install instructions for every platform: [jqlang.org/download](https://jqlang.org/download).
-- A target repo with a `TASKS.md` at its root (see format below) and a `CLAUDE.md` with your test command and conventions.
-
-## Configuration
-
-Repo location is set once, in a gitignored `.env` at the root:
-
-```bash
-# .env — not committed, machine-specific
-PROJECT_REPOS_DIR=/Users/you/Documents/project-repos
-```
-
-`overnight.sh`, `plan.sh`, and `discover.sh` all source this, so the path only lives in one place. Copy `.env.example` to `.env` and edit it after cloning; `.env` itself is gitignored alongside `logs/`.
-
-This `.env` only ever holds `PROJECT_REPOS_DIR` — a path, not a secret — and gets sourced by the shell scripts before `claude` ever launches, so it's unrelated to the `Read(.env)` / `Read(.env.*)` deny rule in `.claude/settings.json`. That rule stops the *agent* from reading `.env` files inside whatever target repo it's working in, which may hold real credentials.
-
-**Why not Claude Code's own `additionalDirectories` setting instead?** It exists (`.claude/settings.json` or the gitignored `.claude/settings.local.json`) and is the persisted equivalent of `--add-dir` — no CLI flag needed, ever. But it's a *standing* grant: every session launched from this repo would have it, forever, whether or not that session has anything to do with any target repo. This repo defaults to the narrower option instead: a wrapper script that resolves repo path(s) fresh per invocation, scoped to what that one run is actually doing. `discover.sh`'s no-arg mode (below) does attach the whole `PROJECT_REPOS_DIR` — but only for that one process's lifetime, and only because discover has no filter to narrow it with (see `## discover.sh`); `plan.sh`'s no-arg mode attaches only the repos that actually have work to plan.
+- Git and the GitHub CLI (`gh`), authenticated for the target repo.
+- [`jq`](https://jqlang.org/download) for the live session output.
+- [pnpm](https://pnpm.io), optional. It is only a script alias runner here (see Commands), nothing to install.
+- A target repo with a task list (see below) and a `CLAUDE.md` with its test command and conventions.
 
 ## Setup
 
 1. Clone this repo somewhere permanent.
-2. Copy `.env.example` to `.env` and set `PROJECT_REPOS_DIR`.
-3. Edit `CLAUDE.md` here if you want to change the workflow rules (branching scheme, quality gates, how research tasks work, etc.) — the defaults are a reasonable starting point.
-4. Edit `.claude/settings.json` to match your actual test/lint/build commands (defaults assume npm/pnpm).
-5. In each target repo, add a `TASKS.md` with your work queue and confirm `CLAUDE.md` has a test command and conventions documented. That's the only setup required in the target repo itself.
-6. `chmod +x overnight.sh plan.sh discover.sh migrate.sh tidy.sh nightlight.sh stats.sh`. No `pnpm install` needed — `package.json` has no dependencies, it's just script aliases.
+2. Copy `.env.example` to `.env` and set `PROJECT_REPOS_DIR` to the folder holding your repos.
+3. `chmod +x *.sh`
+4. Adjust `CLAUDE.md` (workflow rules) and `.claude/settings.json` (test/lint/build allowlist) if the defaults don't fit.
+5. In each target repo, add a task list and make sure its `CLAUDE.md` documents the test command. Nothing else is needed there.
 
-## nightlight.sh
+`.env` is gitignored and only holds `PROJECT_REPOS_DIR`, a path rather than a secret. The scripts source it before `claude` launches, so it is unrelated to the `Read(.env)` deny rule, which stops the *agent* from reading `.env` files in the target repo.
 
-The whole pipeline in one command — chains `discover.sh` → `plan.sh` → `overnight.sh`:
+Why not Claude Code's `additionalDirectories` setting? It is a standing grant: every session from this repo would have the target repos forever. The wrapper scripts resolve repo paths per invocation instead, scoped to what that run does.
 
-```bash
-./nightlight.sh some-repo    # single repo, start to finish
-./nightlight.sh              # every repo under PROJECT_REPOS_DIR, start to finish
-```
+## Commands
 
-It's a thin orchestrator, not a fourth workflow: each phase is the exact same script described below, run in sequence, with no new approval logic of its own — discover's and plan's own interactive approval gates still apply exactly as if you'd run them by hand. The one thing `nightlight.sh` adds is a pause between planning and execution:
+Every script has a `pnpm` alias with the same args (no `--` separator needed). Pick whichever reads better.
 
-```
-Discover and plan are done. Start the overnight run now? [y/N]
-```
+| Script | pnpm | What it does |
+| --- | --- | --- |
+| `./nightlight.sh [repo] [--scan] [overnight flags]` | `pnpm nightlight` | discover, plan, then overnight, chained |
+| `./discover.sh [repo] [--scan]` | `pnpm discover` | mine memory (and with `--scan`, the codebase) for task candidates |
+| `./plan.sh [repo]` | `pnpm plan` | break tasks down, number them, assign stacks |
+| `./overnight.sh [repo] [flags]` | `pnpm overnight` | the unattended run |
+| `./migrate.sh <repo> --to github\|linear` | `pnpm migrate` | move `TASKS.md` into issues |
+| `./tidy.sh <repo> [--labels \| --no-labels]` | `pnpm tidy` | review and close stale GitHub issues |
+| `./stats.sh [repo]` | `pnpm stats` | print cost and time totals |
 
-Discover and plan never write or merge anything without your approval inside those sessions, so chaining them costs nothing extra. `overnight.sh` is different — unattended, potentially hours, real cost — so this is the one point where a chained command should make you deliberately opt in rather than sliding straight into an unattended run. Answering no exits cleanly with a reminder of the equivalent `./overnight.sh` command; nothing is lost, you can run it whenever you're ready.
+With no repo, `discover.sh`, `plan.sh`, and `overnight.sh` cover every qualifying repo under `PROJECT_REPOS_DIR`. A bare repo name resolves against `PROJECT_REPOS_DIR`; a full path also works.
 
-Every flag is supported and routed to whichever phase actually understands it — `--scan` goes to `discover.sh` only, and `overnight.sh`'s own flags (`--stop-after`, `--limit`, `--stack`, `--extra-instructions`, `--override-prompt`, `--force`, see `### Limiting a run` below) are forwarded to the `overnight.sh` call verbatim, unvalidated by `nightlight.sh` itself — `overnight.sh` is the one source of truth for what each flag means and requires (e.g. its own single-repo rule for everything but `--limit` and `--force`):
-
-```bash
-./nightlight.sh some-repo --scan --stop-after 27
-```
-
-Or via `package.json`: `pnpm nightlight [repo] [--scan] [overnight flags]`.
-
-## discover.sh
-
-Wrapper for `/discover-tasks`, so it runs against the right repo (or repos) with zero manual steps:
+### Typical flow
 
 ```bash
-./discover.sh some-repo            # single repo
-./discover.sh some-repo --scan     # single repo, plus a codebase scan
-./discover.sh                      # every repo under PROJECT_REPOS_DIR
+./discover.sh some-repo     # optional: mine memory for task candidates
+./plan.sh some-repo         # break down anything new or vague
+./overnight.sh some-repo    # the unattended run
+./nightlight.sh some-repo   # or all three chained
 ```
 
-Same "adds the target repo and submits the slash command as the first message" shape as `plan.sh` below — a normal interactive session, full back-and-forth, nothing written until you approve. The no-arg form attaches the whole `PROJECT_REPOS_DIR` as one `--add-dir` (discover has no `TASKS.md` prerequisite, so every repo qualifies — see the `additionalDirectories` note above for why that's fine here specifically), then mines every repo's memory in parallel and walks you through approving each repo's candidates one at a time, in order. Each repo's Finalize step merges its own PR once you've approved it — see Safety model below.
+`discover` and `plan` are interactive: a normal session with the slash command pre-submitted, and nothing is written until you approve. Both open a PR and merge it once you've approved the content in that session (see Safety model). `nightlight.sh` adds one thing, a `[y/N]` pause before the overnight step, since that is the only unattended, costly part. Its flags go to whichever phase understands them, and overnight flags pass through unvalidated.
 
-Or via the `package.json` script (see Scripts below): `pnpm discover [repo] [--scan]`.
+### Running overnight
 
-## plan.sh
+Run it in `tmux` or a window you can leave open, and disable sleep. **Ctrl+C** stops the wrapper and kills leftover `claude -p` processes for that repo. Closing the window on Windows does not, so the next run refuses to start while a lock or leftover process exists; pass `--force` to take over. Run one repo at a time per machine (shared usage pool), chaining if needed: `./overnight.sh repo-a && ./overnight.sh repo-b`.
 
-Wrapper for interactive planning sessions, so `/plan-tasks` runs against the right repo (or repos) with zero manual steps:
+Flags scope a run without editing any files. They append to the base prompt, so workflow rules and housekeeping still apply.
 
 ```bash
-./plan.sh some-repo    # single repo
-./plan.sh              # every repo under PROJECT_REPOS_DIR with open, unchecked TASKS.md work
+./overnight.sh some-repo --stop-after 27     # through task #27, then stop
+./overnight.sh some-repo --limit 3           # dispatch 3 tasks, then stop
+./overnight.sh some-repo --stack auth        # only [stack: auth]
+./overnight.sh some-repo --extra-instructions "double check the migration is reversible"
+./overnight.sh some-repo --force             # kill leftovers, take a stale lock
 ```
 
-`claude "<prompt>"` (no `-p`) starts a normal interactive session with `/plan-tasks` pre-submitted as the first message, then stays interactive: the proposal comes back, you review it, and only after you approve does it write to `TASKS.md`. The no-arg form first checks every repo under `PROJECT_REPOS_DIR` for a `TASKS.md` with unchecked items (same check `overnight.sh`'s no-arg mode uses), attaches only the ones that qualify, investigates every repo's items in parallel, then walks you through approving and finalizing each qualifying repo in turn. Each repo's Finalize step merges its own PR once you've approved it — see Safety model below.
+- `--stop-after N` is a task's permanent `#<n>`, not a count or file position. Work still goes top to bottom, so it is a boundary check, not a filter.
+- `--limit N` counts dispatched subprocesses, however they finish (done, needs-human, and blocked all count).
+- `--stop-after`, `--stack`, `--extra-instructions`, and `--override-prompt` need a single repo. `--limit` and `--force` apply per repo in no-arg mode.
+- `--override-prompt "<text>"` skips the dispatch loop and runs one bare session: no task selection, stack notes, or housekeeping. Prefer the flags above.
 
-Or via the `package.json` script (see Scripts below): `pnpm plan [repo]`.
+Live output is formatted by `format-stream.jq`. You get a `=== session started ===` / `=== session done ===` pair per task, and a `gh pr create` call means that task is finished. Logs land in `logs/<repo>/<date>/` (gitignored), named like the branches: `r<R>-<PP>-t<NN>-<slug>.{jsonl,log,stderr.log}`, the same set for housekeeping and override runs, plus `r<R>-run.log` combining everything.
 
-## stats.sh
+### Behavior notes
 
-Local, gitignored cost/time reference — never committed, never touches a target repo. After every dispatched subprocess (each task, plus housekeeping — see How it works above), its `result` event (`total_cost_usd`, `duration_ms`, `num_turns`, and input/output/cache token usage) is folded into `stats/<repo>.json` as a running total. `sessions` here counts individual `claude -p` calls, not runs of `overnight.sh`:
+- **Five-hour usage block:** on a `rejected` `five_hour` rate-limit event, the run sleeps until its `resetsAt` and retries the same call (max 3 retries). Weekly blocks are treated as normal failures.
+- **No pause between tasks:** the run continues until everything is done, `NEEDS HUMAN`, or `blocked`.
+- **Stacks don't wait for review:** each task branches from the previous task's tip, and a `NEEDS HUMAN` on an earlier task doesn't pause the stack.
+- **`blocked` is for cross-stack dependencies.** If a task depends on the real-world result of an earlier same-stack human step, nothing catches that automatically; it falls to the agent's judgment under the "ambiguous, annotate, skip" rule.
 
-```json
-{
-  "sessions": 13,
-  "total_cost_usd": 52.71,
-  "total_duration_s": 121430,
-  "total_turns": 2870,
-  "total_cache_read_tokens": 9482113,
-  "total_cache_creation_tokens": 205774,
-  "total_input_tokens": 1204,
-  "total_output_tokens": 611382,
-  "lastSession": {
-    "date": "2026-08-01",
-    "calls": 3,
-    "cost_usd": 6.56,
-    "duration_s": 2025,
-    "num_turns": 147,
-    "cache_read_tokens": 11759541,
-    "cache_creation_tokens": 235138,
-    "input_tokens": 212,
-    "output_tokens": 98340,
-    "tasks": [
-      {"taskNumber": 18, "taskTitle": "Strip sprite background", "status": "done", "cost_usd": 1.30, "duration_s": 445, "num_turns": 28, "cache_read_tokens": 1568035, "cache_creation_tokens": 71886},
-      {"taskNumber": 19, "taskTitle": "Some other task", "status": "needs-human", "cost_usd": 4.88, "duration_s": 1449, "num_turns": 104, "cache_read_tokens": 9657573, "cache_creation_tokens": 138775}
-    ]
-  }
-}
-```
+### Stats
 
-Two granularities live here:
-- `total_*` — lifetime across every `run_repo()` invocation ever, for this repo.
-- `lastSession` — every dispatch made by the most recent `overnight.sh` invocation for this repo (every task attempted plus housekeeping), rolled into one number, plus a `tasks` breakdown (one entry per dispatched task, housekeeping excluded) so you can see which task cost what and how it finished at a glance. This is "what did last night's run actually cost me" — printed to stdout at the end of the run too, so you don't need to open this file or dig through logs just to see it. (There's deliberately no per-dispatch `lastRun` here: with one subprocess per task, the last dispatch of a normal run is always housekeeping, whose prompt barely varies call to call, so that number in isolation isn't informative.)
+After every dispatched subprocess, its `result` event (cost, duration, turns, token usage) is folded into `stats/<repo>.json`: lifetime `total_*` fields plus a `lastSession` rollup with a per-task breakdown. It is also printed at the end of a run. `stats/<repo>-history.jsonl` gets one appended line per run for time series. Everything is gitignored.
 
-`pnpm stats some-repo` prints that repo's running totals. `pnpm stats` (no arg) sums the `total_*` fields across every `stats/*.json` file, for a comprehensive total across every repo worked from this nightlight instance. `stats/<repo>.json` itself is a snapshot, not a log — each run overwrites `lastSession` with the latest, so there's nothing to grep through, just current numbers. `total_cache_read_tokens` is the one to watch when judging whether the per-task dispatch model (see How it works above) is actually keeping cost down: it should grow roughly linearly with work done, not compound the way a single continuous session across many tasks does.
-
-**docs/stats-schema.json** documents the shape above (committed, unlike the data itself) — the contract anything reading these files should code against. `overnight.sh`'s `validate_stats_shape()` is a small hand-written jq structural check kept manually in sync with it (this repo has zero runtime dependencies by design, so no real schema-validator library is pulled in for one local bookkeeping file); it warns on a mismatch rather than failing the run, since a stats-file format bug is never worth losing real task work over.
-
-**stats/\<repo\>-history.jsonl** is the actual time series: unlike `lastSession` (overwritten every run), every run appends one line here (the same shape as `lastSession`, plus `repo` and an actual `ranAt` timestamp since `date` alone doesn't disambiguate same-day runs). This is what a future cost/completion-rate-over-time dashboard should read from, without re-parsing raw `logs/` files run by run.
+`total_cache_read_tokens` is the number to watch: it should grow roughly linearly with work done. The shape is documented in `docs/stats-schema.json`, and `validate_stats_shape()` in `overnight.sh` warns on a mismatch rather than failing the run.
 
 ## Skills
 
-`/plan-tasks` does the task breakdown that makes the overnight run actually work — `overnight.sh` executes a queue, it doesn't design one. `/discover-tasks` mines a repo's own memory (and, with `--scan`, its codebase) for task candidates before that. The full, current behavior of each lives in its own `SKILL.md` (`.claude/skills/plan-tasks/SKILL.md` and `.claude/skills/discover-tasks/SKILL.md`, not reproduced here to avoid drift), but the shape of both:
+`/plan-tasks` does the breakdown that makes the overnight run work: `#<n>` numbering, `[stack: <name>]` assignment (biased toward stacking, since a false `solo` risks conflicting PRs), and acceptance criteria. `/discover-tasks` mines a repo's memory and, with `--scan`, its codebase for candidates. Both investigate in parallel, then ask for approval before writing anything, and both only touch the task list and `docs/nightlight-meta.json`. Their behavior lives in `.claude/skills/<name>/SKILL.md`.
 
-- Investigate/mine in parallel (one dispatched agent per item or per repo), then synthesize and ask for approval back in the main thread — never one-at-a-time in the main thread, and never write anything before you've approved it.
-- `#<n>` numbering and `[stack: <name>]` assignment (`plan-tasks`) — a stable identity per task, and the dependency/shared-file analysis that makes stacked overnight PRs mergeable in the right order. Deliberately biased toward stacking ("when in doubt, stack") since a false `solo` risks two PRs conflicting with no ordering to resolve it.
-- No-arg mode (both): fans out across every repo under `PROJECT_REPOS_DIR` (or the ones that qualify — see `## discover.sh` / `## plan.sh` above) in parallel, then reviews and finalizes them one at a time, in order.
-- Finalize: commits, opens a PR, and — new — merges it once you've approved the content earlier in that same session. See Safety model below for the scope of that.
+## Task sources
 
-Skills live in a named folder with a `SKILL.md` inside (not a flat `.md` file directly under `.claude/skills/`) — that's the format Claude Code actually discovers. `disable-model-invocation: true` means each only runs when explicitly called via its slash command, never auto-triggered. Both run interactively and never touch application code — only `TASKS.md` and `docs/nightlight-meta.json`.
-
-## Scripts
-
-```bash
-pnpm nightlight [repo] [--scan] [overnight flags]  # ./nightlight.sh [repo] [--scan] [overnight flags]
-pnpm discover [repo] [--scan]                       # ./discover.sh [repo] [--scan]
-pnpm plan [repo]                                     # ./plan.sh [repo]
-pnpm migrate <repo> --to github|linear               # ./migrate.sh <repo> --to github|linear
-pnpm tidy <repo> [--labels | --no-labels]            # ./tidy.sh <repo> [--labels | --no-labels]
-pnpm overnight some-repo                             # ./overnight.sh some-repo
-pnpm stats [some-repo]                               # ./stats.sh [some-repo]
-```
-
-Thin `package.json` wrappers around the shell scripts — no dependencies, nothing to `pnpm install`. Args pass straight through to the script (pnpm doesn't need a `--` separator the way npm does), so `pnpm plan some-repo` and `./plan.sh some-repo` are identical. Use whichever reads better; the rest of this README uses the raw `./script.sh` form since it's unambiguous about what's actually running.
-
-## Usage
-
-```bash
-# mine memory for task candidates first, if any have accumulated
-./discover.sh some-repo
-
-# breakdown next (see plan.sh above) if TASKS.md has anything new or vague
-./plan.sh some-repo
-
-# the actual overnight run
-./overnight.sh some-repo
-```
-
-`discover.sh`/`plan.sh` with no repo run across every repo under `PROJECT_REPOS_DIR` (see `## discover.sh` / `## plan.sh` above) — but they're still two separate commands, run whenever you want; discover doesn't automatically feed into plan. Since discover's Finalize merges its own PR (see Safety model below), running `plan` any time after `discover` already sees whatever discover found, with no manual merge step in between.
-
-`./nightlight.sh some-repo` (see `## nightlight.sh` above) is the equivalent of the three commands above, chained into one, with a confirmation pause before the `overnight.sh` step.
-
-`overnight.sh` resolves a bare name against `$PROJECT_REPOS_DIR` (from `.env`) or accepts a full path. Run it inside `tmux` or a terminal window you can leave open. **Ctrl+C** stops the wrapper and kills any leftover `claude -p` still targeting the active repo (Windows included — the signal often never reaches `claude.exe`, so the trap does a process-tree kill instead). Closing the window does **not** reliably do that on Windows; the next `./overnight.sh` on that repo will refuse to start if a lock or leftover print-mode process is still there. Pass `--force` to kill leftovers and take the lock. Disable sleep/hibernate for the duration.
-
-Only run one repo at a time per machine (shared usage pool). The per-repo lock also refuses a second `overnight.sh` against the same working tree, which is what used to produce colliding edits after a Ctrl+C that only killed the wrapper. Chain sequentially if you need more than one: `./overnight.sh repo-a && ./overnight.sh repo-b`.
-
-### Limiting a run
-
-Flags scope a single run without editing `TASKS.md` or `CLAUDE.md`. They *append* to the base prompt rather than replacing it, so the workflow rules, quality gates, and end-of-session housekeeping still apply — only the task scope changes.
-
-```bash
-./overnight.sh some-repo --stop-after 27     # complete through task #27, then stop
-./overnight.sh some-repo --limit 3           # complete 3 tasks this run, then stop
-./overnight.sh some-repo --stack auth        # only tasks in [stack: auth], skip every other stack
-./overnight.sh some-repo --extra-instructions "double check the migration is reversible"
-./overnight.sh some-repo --force              # kill leftover claude -p / take a stale lock
-```
-
-`--stop-after N` refers to a task's permanent `#<n>` number (see TASKS.md format below), not a count and not a position in the file. The agent works through tasks in file order and stops once it's completed task `#N`, without starting anything numbered higher — since numbers only increase down the file as tasks are added, this reliably targets one specific task, unlike a position-based count that would silently point somewhere else the moment an earlier task gets archived. Note this is a boundary check on the number, not a filter on the walk: if TASKS.md isn't in strict numeric order (e.g. `#5` was inserted above `#3`), the agent still works top-to-bottom, so it completes `#5` on the way to `#3` even though `5 > 3`.
-
-`--limit N` is the count-based counterpart: stop after dispatching N tasks this run, whatever their numbers happen to be or however each one turns out (done, `NEEDS HUMAN`, or `blocked` all count against the limit — it's a count of subprocesses run, not of successes). Use `--stop-after` when you want a specific task as the boundary; use `--limit` when you just want "do a few and stop." The two flags are deliberately separate rather than one overloaded flag (e.g. `5` vs `#5`) — a bare number is ambiguous between "a count" and "a task number," and that ambiguity is exactly the kind of silent-wrong-behavior risk this tool should avoid in an unattended run.
-
-`--stop-after`, `--stack`, `--extra-instructions`, and `--override-prompt` require a single target repo — they're rejected in the no-arg "run every repo" mode, since scoping to one task number/stack/prompt across multiple unrelated repos isn't a coherent request. `--limit` and `--force` are the exceptions: given with no repo, each applies independently to each repo's own run (`--limit` = first N tasks in that repo; `--force` = take that repo's lock / kill its leftovers) rather than being a global count or a single takeover across all repos combined.
-
-```bash
-./overnight.sh --limit 2                     # every repo with open work, first 2 tasks each
-```
-
-There's also `--override-prompt "<text>"`, which bypasses the per-task dispatch loop entirely and runs `<text>` as a single, one-off session instead — no task selection, no stack-notes, no housekeeping afterward. Reach for the flags above first — an override loses the housekeeping and workflow-rules framing unless `<text>` restates it.
-
-Each dispatched subprocess runs `claude -p` with `--output-format stream-json`, so its events (assistant text, tool calls, tool results) arrive incrementally rather than all at once at the end. Each line is piped through `format-stream.jq`, so the terminal you launched `overnight.sh` from shows clean, readable progress live — no separate `tail -f` needed. You'll see a `=== session started ===` / `=== session done: ... ===` pair once per task (plus one more for housekeeping) rather than a single pair for the whole run, since each is its own fresh `claude -p` call. The agent opens one PR per task as it finishes, so a `gh pr create` call showing up in that live output is your signal that task is done and ready to check, rather than waiting for the whole run to finish.
-
-Logs land in `logs/<repo>/<date>/`, all gitignored, named to mirror the branch schema `overnight/<date>/r<R>-<PP>-t<NN>-<slug>`: every run of the same day shares the date folder and is told apart by its `r<R>-` prefix (`PP` = zero-padded dispatch position, `t<NN>` = the task's permanent `#<n>`, so files sort by run then dispatch order). Each dispatched task gets `r<R>-<PP>-t<NN>-<slug>.jsonl` (the raw NDJSON event stream, kept for later inspection or tooling), `.log` (the same `format-stream.jq` output shown live in your terminal, saved as-is), and `.stderr.log` (anything `claude` wrote to stderr, kept separate so it doesn't break the JSON stream; removed when empty). Housekeeping gets the same set as `r<R>-housekeeping.*`, an `--override-prompt` run as `r<R>-override.*`, and `r<R>-run.log` is the combined overview with every subprocess's readable output appended in order.
-
-Switching to `stream-json` only changes how the CLI reports events to us locally — it doesn't change what the agent does or what it costs. Each subprocess's closing `result` event includes its own `total_cost_usd`, which `format-stream.jq` prints as that subprocess's summary line, and which also feeds `stats/<repo>.json` (see [stats.sh](#statssh) above) — a separate, gitignored directory from `logs/`, since one is raw per-subprocess debug output and the other is a small running-totals reference meant to survive longer than a day's log file.
-
-## Behavior notes
-
-- **Ctrl+C stops the active repo's print-mode Claude, not just the wrapper.** `overnight.sh` traps INT/TERM and kills `claude -p --add-dir <that-repo>` process trees (via `taskkill /T` on Windows). A `logs/<repo>.overnight.lock` plus a leftover-process scan refuse a second run against the same working tree; `--force` takes over. Interactive `claude` sessions (no `-p`) are not touched. Closing the terminal window still does not run the trap — use `--force` on the next start if that happens.
-- **A five-hour usage-window block pauses and resumes automatically, mid-dispatch.** Every `claude -p --output-format stream-json` call emits a `rate_limit_event` whether it's blocked or not; `overnight.sh` reads its `rate_limit_info.status` and, only when that's `"rejected"` on the `five_hour` window (not the informational `"allowed_warning"`, and not a `seven_day`/weekly block — that's left as a normal failure instead), sleeps until the event's own `resetsAt` and retries the exact same subprocess call. No polling, no separate daemon watching the clock — the reset time comes from data the session already streams. Capped at 3 pause-retries per call so a stale or wrong `resetsAt` can't hang a run indefinitely.
-- **The run doesn't pause between tasks, but each task is its own session.** `overnight.sh` dispatches every Agent-Ready, Verify, and Research item as its own fresh `claude -p` subprocess, one after another with no human gate in between, stopping only once everything is complete, annotated `NEEDS HUMAN`, or annotated `blocked` — not after each task. Unlike a single continuous session, though, each task starts with a clean slate: it has no memory of any other task, only what its prompt hands it (the task text itself, and — for stacked tasks — the latest entry of that stack's `docs/stack-notes/<stack>.md`, with older entries left on disk).
-- **Within a stack, later tasks don't wait for earlier ones to be reviewed.** Each task branches from the previous task's branch tip (resolved for it by `overnight.sh`'s dispatch loop, from stack-notes), so task 2 builds on task 1's code as soon as it's written, regardless of whether you've looked at task 1's PR yet. A `NEEDS HUMAN` annotation on task 1 (missing env var, API key, etc.) doesn't pause the stack — the code is presumed complete, just not fully runnable without that step.
-- **`blocked` is for cross-stack dependencies, not same-stack ordering.** It only gets used when a task turns out mid-implementation to depend on work in a *different* stack. If a task's correctness genuinely depends on the real-world outcome of an earlier same-stack task's human-verification step (not just on that task's code existing), there's no automatic rule catching that today — it falls to the agent's judgment under the general "ambiguous, annotate why, skip it" rule.
-
-## GitHub Issues task source (opt-in)
-
-Local `TASKS.md` stays the default. Nothing changes unless a target repo opts in. To use GitHub issues as the work queue instead, set this in the target repo's `docs/nightlight-meta.json`:
-
-```json
-{
-  "taskSource": "github",
-  "github": { "repo": "owner/name" },
-  "labels": { "agentReady": "nl:agent-ready" }
-}
-```
-
-- `taskSource`: `"local"` (default, `TASKS.md`) or `"github"`.
-- `github.repo`: optional, defaults to the target repo's `origin`.
-- `labels`: optional overrides. Defaults are `nl:agent-ready`, `nl:verify`, `nl:research` (section), `nl:blocked`, `nl:needs-human`, `nl:decision` (human-only, never dispatched), `nl:discovered` (un-triaged, never dispatched), and `nl:stack:<name>` (stack). Override keys: `agentReady`, `verify`, `research`, `blocked`, `needsHuman`, `decision`, `discovered`, `stackPrefix`.
-
-An open issue with a section label is a task, and its number is the task id. Housekeeping closes issues once their PR merges and applies `nl:blocked` / `nl:needs-human` with a comment. It does not write TASKS.md or the archive.
-
-**Public repos:** issue text is untrusted input fed to an unattended agent with write tools. The section label is the gate, and applying a label needs triage or write access, so strangers can't dispatch work. Only comments from `OWNER`, `MEMBER`, and `COLLABORATOR` authors are included in the task body. Still, `taskSource: "github"` on a public repo assumes your label permissions are tight: keep triage access limited to people you trust.
-
-Permissions: `.claude/settings.json` allows only `gh issue view/list/comment/create/edit/close`, `gh label list/create`, `gh pr view/list`, and deletion of `overnight/*` branches, and denies `gh issue delete` and `gh repo delete`. There is no blanket `gh` or MCP allow.
-
-## Linear task source (opt-in)
-
-Local `TASKS.md` and GitHub issues are unchanged. To use a Linear team as the work queue, set this in the target repo's `docs/nightlight-meta.json`:
-
-```json
-{
-  "taskSource": "linear",
-  "linear": { "teamId": "ENG" }
-}
-```
-
-`linear.teamId` is a team key or UUID. `labels` overrides work as in GitHub mode. Tasks are open issues on that team with a section label; their ids are Linear identifiers like `ENG-142`, so `--stop-after` is not available (`--limit` and `--stack` work).
-
-**One Linear team per repo.** This is the supported setup. The Linear module scopes only by `linear.teamId` and the `nl:*` labels, so two repos sharing a team would each dispatch the other's labeled issues, and `pnpm migrate <repo> --to linear` dedupe would match across repos. A team per repo, inside one workspace, gives each repo its own issue prefix, statuses, and cycles, and needs no second API key or MCP sign-in (the MCP connects to one workspace at a time). A Linear Project, if one is used later to group stack milestones, lives inside that repo's team; the team is the unit of isolation.
-
-One-time setup:
-
-1. **GitHub CLI.** `gh` is still required in Linear mode: task PRs, branch and PR checks, and housekeeping's merge-state checks all use it. Only the `gh issue` / `gh label` calls go away. Run `gh auth login` once and confirm with `gh auth status`.
-2. **API key.** Create a Linear personal API key and put `LINEAR_API_KEY=...` in an env file. Resolution: the target repo's env files first, then nightlight's own, with the same rules for both. Files git reports as ignored are tried before the rest, since those are the private ones; within each group the order is `.env.local`, `.env.*.local`, `.env.*`, `.env`. Template files (`.env.example`, `.env.sample`, `.env.template`, `.env.dist`) are skipped. First match wins, and only that one line is read (files are never sourced). A warning prints if the file holding the key is tracked by git or not gitignored.
-3. **MCP server.** Register Linear's MCP server once, interactively, at user scope so every session sees it regardless of directory (the default scope ties it to the directory you ran it in): `claude mcp add --scope user --transport http linear https://mcp.linear.app/mcp`, then authenticate via `/mcp` in a Claude session. Confirm with `claude mcp get linear` (scope "User config", status connected).
-
-**Migrating an existing repo.** `pnpm migrate <repo> --to linear` moves the repo's open `TASKS.md` items into the Linear team as issues, archives any checked-off `[x]` items (with their merged PRs) instead of leaving them in `TASKS.md`, then flips `taskSource` to `linear` in a small PR. It is interactive: it first shows what the team already holds (one team per repo), dedupes against existing issues and merged PRs, and asks before creating each issue. Re-running after a partial migration is safe, since each created issue carries a `Migrated from TASKS.md #<n> (` marker in its body. `Decisions` items become `nl:decision` issues and `Discovered` items become `nl:discovered` issues (each with its own marker, `Migrated from TASKS.md discovered-<hash> (` for Discovered), and `TASKS.md` is removed once nothing remains (kept only if you skipped an item). Reviewing a repo's existing unlabeled Linear issues is not part of this.
-
-Bash lists tasks through Linear's GraphQL API with the key. Everything the agent does to issues (read, label, comment, close) goes through the MCP server. Linear's optional GitHub integration is separate and not needed.
-
-Permissions: `.claude/settings.json` allows only `mcp__linear__` `whoami`, `list_teams`, `get_team`, `list_issues`, `get_issue`, `list_comments`, `list_issue_labels`, `list_issue_statuses`, `list_projects`, `list_milestones`, `save_issue`, `save_comment`, and `create_issue_label`, and denies `delete_comment`, `delete_attachment`, `delete_diff_comment`, and `delete_status_update`. There is no server-level MCP allow.
-
-### Why reads use GraphQL and writes use MCP
-
-**Reads are GraphQL because the dispatcher is plain bash.** `overnight.sh` decides what to dispatch, applies `--stack` and `--limit`, and checks whether there is any work at all before a `claude` session exists, and bash cannot call an MCP tool. Listing through a `claude -p` session would cost tokens on every run and every eligibility check and make the output depend on the model.
-
-**Writes are MCP for three reasons that an agent calling REST or GraphQL itself does not get:**
-
-1. **Credentials stay out of the model's reach.** The host runs the OAuth login and holds the tokens. The API key lives only in bash, so a task session, or a prompt injection hidden in an issue body, never sees a key that can do anything in the workspace.
-2. **Permission by operation.** `.claude/settings.json` can allow `mcp__linear__save_comment` and deny `mcp__linear__delete_comment`. Allowing `curl api.linear.app/graphql` would allow every query and mutation, because they all go through one endpoint.
-3. **Curated tools.** `save_issue` takes sensible arguments and returns trimmed output, so the model does not hand-write GraphQL filters, which is where agents go wrong.
-
-**What MCP does not add:** typed schemas and discovery (GraphQL introspection and OpenAPI give the same) and OAuth itself (MCP standardized how hosts run it). It also exists because chat hosts such as Claude on the web cannot make arbitrary authenticated HTTP calls and only speak MCP.
-
-**Costs accepted:** two credentials (the key plus the OAuth login), tool definitions taking up context, and an OAuth session that must stay logged in unattended. That last one was tested: seven independent headless launches kept their session (`docs/research/linear-mcp.md`). **Fallback** if OAuth proves flaky: a thin wrapper script with fixed operations (comment, set labels, move state) that holds the key, allowed per script, which gives similar protection without OAuth.
-
-## TASKS.md format (in the target repo)
-
-This applies to the default `local` source only. Repos using the `github` or `linear` source have no `TASKS.md`: tasks are labeled issues, and `pnpm migrate` removes the file.
+### Local `TASKS.md` (default)
 
 ```markdown
 ## Agent-Ready
@@ -309,34 +121,68 @@ This applies to the default `local` source only. Repos using the `github` or `li
 <!-- agent appends here during a session; you triage each morning -->
 ```
 
-- **Agent-Ready** — implemented in file order, each with acceptance criteria.
-- **Verify** — confirmed or implemented, whichever the codebase needs.
-- **Research** — produces a markdown doc, never touches code.
-- **Decisions (human only)** — never attempted by the agent.
-- **`#<n>`** — a stable, never-reused task number assigned during `/plan-tasks`, on every section, not just Agent-Ready. It's what lets a PR, commit, or `## Discovered` note reference a specific task after it's been checked off and archived out of `TASKS.md`. Tracked in `docs/nightlight-meta.json`'s `nextTaskNumber` field in the target repo.
-- **`[stack: <name>]`** — tasks sharing a stack name are branched and PR'd in sequence (each targets the previous branch); tasks with no annotation are treated as continuing the previous task's stack. `solo` is a reserved name and the one exception: every `solo`-tagged task, including an unannotated task that inherits `solo` via the fallback rule above, branches from `main` and PRs to `main` independently, never chained to other `solo` tasks, no matter how many share the tag. Assign these during `/plan-tasks`, not by hand.
+- **Agent-Ready:** implemented in file order. **Verify:** confirmed or implemented. **Research:** produces a markdown doc, never code. **Decisions:** never attempted.
+- **`#<n>`:** a permanent, never-reused number assigned by `/plan-tasks` on every section, tracked in `docs/nightlight-meta.json`'s `nextTaskNumber`. It lets a PR or note reference a task after it's archived.
+- **`[stack: <name>]`:** tasks sharing a name are branched and PR'd in sequence. Unannotated tasks inherit the previous task's stack. `solo` is reserved: each solo task branches from and PRs to `main` independently. Assign these in `/plan-tasks`, not by hand.
+
+### GitHub issues (opt-in)
+
+In the target repo's `docs/nightlight-meta.json`:
+
+```json
+{
+  "taskSource": "github",
+  "github": { "repo": "owner/name" },
+  "labels": { "agentReady": "nl:agent-ready" }
+}
+```
+
+An open issue with a section label is a task, and the issue number is the task id. `github.repo` defaults to `origin`. Default labels are `nl:agent-ready`, `nl:verify`, `nl:research`, `nl:blocked`, `nl:needs-human`, `nl:decision`, `nl:discovered` (the last two are never dispatched), and `nl:stack:<name>`. Override keys: `agentReady`, `verify`, `research`, `blocked`, `needsHuman`, `decision`, `discovered`, `stackPrefix`. Housekeeping closes issues once their PR merges and sets the blocked/needs-human labels with a comment. It doesn't write `TASKS.md` or the archive.
+
+**Public repos:** issue text is untrusted input to an agent with write tools. The section label is the gate (applying one needs triage access), and only comments from `OWNER`, `MEMBER`, and `COLLABORATOR` reach the task body. Keep triage access limited to people you trust.
+
+### Linear (opt-in)
+
+```json
+{
+  "taskSource": "linear",
+  "linear": { "teamId": "ENG" }
+}
+```
+
+`linear.teamId` is a team key or UUID. Tasks are open issues on that team with a section label, with ids like `ENG-142` (so `--stop-after` is unavailable; `--limit` and `--stack` work). **Use one Linear team per repo:** the module scopes only by team and `nl:*` labels, so repos sharing a team would dispatch each other's issues.
+
+One-time setup:
+
+1. **`gh` auth.** Still required for task PRs and merge-state checks. Run `gh auth login`.
+2. **API key.** Put `LINEAR_API_KEY=...` in an env file. The target repo's env files are checked first, then nightlight's. Gitignored files go before the rest, in the order `.env.local`, `.env.*.local`, `.env.*`, `.env`. Templates (`.example`, `.sample`, `.template`, `.dist`) are skipped. The first match wins, only that line is read, and a warning prints if the file is tracked or not ignored.
+3. **MCP server.** `claude mcp add --scope user --transport http linear https://mcp.linear.app/mcp`, then authenticate via `/mcp`. Confirm with `claude mcp get linear`.
+
+`pnpm migrate <repo> --to linear` (or `github`) moves open `TASKS.md` items into issues, archives checked-off ones, and flips `taskSource` in a small PR. It is interactive: it dedupes against existing issues and merged PRs and asks before creating each one. Re-running after a partial migration is safe, since created issues carry a `Migrated from TASKS.md` marker. `Decisions` and `Discovered` items become `nl:decision` and `nl:discovered` issues.
+
+**Why reads use GraphQL and writes use MCP.** The dispatcher is plain bash, which can't call MCP tools, and listing through a model would cost tokens on every eligibility check. Writes go through MCP because the API key then lives only in bash and never reaches the model or an injected issue body. Permissions also work per operation (allow `save_comment`, deny `delete_comment`), whereas allowing the GraphQL endpoint allows everything. The cost is two credentials and an OAuth session that must stay logged in unattended (seven headless launches kept theirs, see `docs/research/linear-mcp.md`). If OAuth proves flaky, the fallback is a thin wrapper script with fixed operations.
+
+Both modes use an explicit tool allowlist in `.claude/settings.json` (specific `gh issue`/`gh label` commands, specific `mcp__linear__` tools, delete operations denied, no blanket `gh` or MCP allow).
 
 ## What you get in the morning
 
-- One PR per task, each targeting either `main` or the previous branch in its stack.
-- One `chore: session housekeeping <date>` PR that updates `TASKS.md`, adds `docs/tasks-archive/<date>.md`, and updates the `tasksCompleted`/`tasksBlocked` counts in `docs/nightlight-meta.json` — the only PR that touches any of the three.
-- Anything the agent couldn't finish is annotated `NEEDS HUMAN: <steps>` (env vars, API keys, dashboard config) or `blocked: <reason>` (judgment calls, missing context) directly in `TASKS.md`, and in the relevant PR description.
+- One PR per task, targeting `main` or the previous branch in its stack.
+- One `chore: session housekeeping <date>` PR updating the task list, archive, and `docs/nightlight-meta.json`. It's the only PR that touches them.
+- Anything unfinished is annotated `NEEDS HUMAN: <steps>` or `blocked: <reason>` in the task list and the PR description.
 
 Merge stacks bottom-up. Merge solos and housekeeping whenever.
 
 ## Safety model
 
-No `--dangerously-skip-permissions`. `.claude/settings.json` is an explicit allowlist (test/lint/build commands, safe git operations, PR creation) plus an explicit denylist (`main`/`master` push, merge, `rm -rf`, `.env` reads, `--no-verify`). The agent can't merge its own work or push to a protected branch — everything it produces is a PR waiting for you to look at it. If a task needs judgment or credentials it doesn't have, it's supposed to stop and annotate rather than guess.
+No `--dangerously-skip-permissions`. `.claude/settings.json` is an explicit allowlist (test/lint/build, safe git, PR creation) plus a denylist (push or merge to `main`, `rm -rf`, `.env` reads, `--no-verify`). The agent can't merge its own work. If a task needs judgment or credentials it lacks, it stops and annotates.
 
-**One narrow, deliberate exception:** `/discover-tasks` and `/plan-tasks` Finalize each merge their own PR (`gh pr merge --rebase --delete-branch`) once it's open, rather than leaving it for you to merge by hand. This isn't the agent deciding what's safe to land — every item going into that PR was already explicitly approved by you earlier in that same session (candidate-by-candidate in discover's Phase 2, or the full breakdown/numbering/stacking proposal in plan's Synthesize). The merge just completes something you already signed off on. It's scoped tightly on purpose: `.claude/settings.json` only allows `gh pr merge` for branches matching `chore/tasks-discover-*` / `chore/tasks-plan-*` — raw `git merge` stays denied everywhere, for every branch, no exceptions — and those branches only ever touch `TASKS.md`/`docs/nightlight-meta.json`, never application code. `overnight.sh`'s task PRs and its end-of-session housekeeping PR are untouched by this — those still always wait for you, exactly as before.
+**One narrow exception:** `/discover-tasks` and `/plan-tasks` Finalize merge their own PR (`gh pr merge --rebase --delete-branch`). Everything in it was already approved by you in that session, so the merge just completes it. The allowlist only permits `gh pr merge` on `chore/tasks-discover-*` and `chore/tasks-plan-*` branches, which never touch application code, and raw `git merge` stays denied everywhere. Overnight task and housekeeping PRs always wait for you.
 
 ## Prior art
 
-This isn't the only take on "run Claude Code overnight." A few others, for comparison:
+- [night-shift](https://github.com/ppuliu/night-shift): Claude and Codex adversarially review each other's work. Uses `--dangerously-skip-permissions`.
+- [ClaudeNightsWatch](https://github.com/aniketkarne/ClaudeNightsWatch): a daemon that fires a task file right before your usage window resets.
+- [continuous-claude](https://github.com/AnandChowdhary/continuous-claude): a loop of PR, wait for checks, merge, repeat.
+- [Boucle](https://github.com/Bande-a-Bonnot/Boucle-framework): cron-scheduled, with persistent memory across runs.
 
-- [night-shift](https://github.com/ppuliu/night-shift) — Claude and Codex adversarially review each other's work so no single model grades its own homework. Runs with `--dangerously-skip-permissions`.
-- [ClaudeNightsWatch](https://github.com/aniketkarne/ClaudeNightsWatch) — a daemon that fires a task file right before your usage window resets, rather than a manual trigger.
-- [continuous-claude](https://github.com/AnandChowdhary/continuous-claude) — a literal loop: PR, wait for checks, merge, repeat.
-- [Boucle](https://github.com/Bande-a-Bonnot/Boucle-framework) — cron-scheduled, with its own persistent-memory layer across runs.
-
-The main difference here: this system never bypasses permissions, and code changes always wait for a human-reviewed merge. Everything above defaults to skipping permission prompts for the autonomous run; this one trades some autonomy for an explicit allowlist instead — the only self-merges it ever does are `discover`/`plan`'s own already-approved `TASKS.md` bookkeeping (see Safety model above), never application code.
+The difference here: permissions are never bypassed, and code changes always wait for a human-reviewed merge.
