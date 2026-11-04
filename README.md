@@ -1,8 +1,12 @@
+<img align="right" style="float: right; margin: 0 0 16px 24px;" src="docs/NightlightLogo.png" alt="nightlight logo: a glowing green plug-in nightlight" width="260" />
+
 # nightlight
 
 Leave a light on while you sleep. Runs unattended Claude Code sessions against a repo's task list, opens the work as reviewable PRs, never touches `main` directly.
 
 This repo holds the runner and its config, nothing else. No dependencies, no dashboard, no daemon. It reaches into target repos with `--add-dir` for one session and leaves nothing behind, so it works the same on any repo with a task list.
+
+<br clear="right" />
 
 ## How it works
 
