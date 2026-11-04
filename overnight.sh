@@ -539,13 +539,13 @@ Use status=done when the PR is open and every acceptance criterion is met; statu
 # dispatched task's TASK_RESULT line (collected by the caller across the
 # loop), plus which tasks were filtered out and left untouched this run.
 build_housekeeping_prompt() {
-  local run_summary="$1" skipped_summary="$2" run="$3"
+  local run_summary="$1" skipped_summary="$2" run="$3" keep_args="${4:-}"
   if [[ "$TASK_SOURCE" == "github" ]]; then
-    build_housekeeping_prompt_github "$run_summary" "$skipped_summary" "$run"
+    build_housekeeping_prompt_github "$run_summary" "$skipped_summary" "$run" "$keep_args"
     return
   fi
   if [[ "$TASK_SOURCE" == "linear" ]]; then
-    build_housekeeping_prompt_linear "$run_summary" "$skipped_summary" "$run"
+    build_housekeeping_prompt_linear "$run_summary" "$skipped_summary" "$run" "$keep_args"
     return
   fi
   local p="A target repo has been added to this session via --add-dir. This session runs ONLY the end-of-session housekeeping step from the \"Overnight Agent Workflow\" rules in CLAUDE.md (this repo, nightlight's own) -- this run just finished dispatching one fresh session per task, so you were not present for any of them. Do not attempt any task work yourself. This is run $run of today, so name the housekeeping branch overnight/<YYYY-MM-DD>/r$run-housekeeping.
@@ -564,7 +564,7 @@ $skipped_summary"
 
 Treat the TASK_RESULT lines above as a starting point, not ground truth -- a task session can misreport, so confirm each PR/branch's actual state with git/gh before writing anything (e.g. gh pr view <pr> --json state,mergedAt, or gh pr list --head <branch>). Then follow the \"TASKS.md maintenance\" rules in CLAUDE.md exactly: check off or annotate each attempted task (NEEDS HUMAN / blocked as reported, with the note given), archive completed tasks to a new docs/tasks-archive/<date>.md, update tasksCompleted/tasksBlocked in docs/nightlight-meta.json, and open the housekeeping PR targeting main.
 
-Before opening that PR, also do the branch-cleanup sweep documented in the same CLAUDE.md section: check every docs/stack-notes/*.md file's Branch: lines for merge state and delete any branch whose PR already merged, locally and on origin (branch deletion is a git operation, not part of the housekeeping commit or PR, and happens even when the file is kept). After that merge-state check, git rm each finished stack's docs/stack-notes/<stack>.md inside the housekeeping commit and list the removal in the PR body. A stack is finished only when ALL hold: every Branch: line's PR is MERGED; no open task in TASKS.md carries [stack: <name>] under any glyph ([ ], [!], [/]); no open PR has a head branch for this stack (gh pr list --state open); no task from the stack appears in the TASK_RESULT lines above. Keep the file if any check fails, if gh fails, or if the file has zero Branch: lines.
+Before opening that PR, also run the stack-notes sweep, one deterministic script: bash lib/stack-notes.sh <target-repo-path>$keep_args (run it from this repo, nightlight; the target repo is the --add-dir). It deletes merged stack branches locally and on origin and git rms each finished stack's docs/stack-notes/<stack>.md, staged but not committed, so include those removals in the housekeeping commit and list them in the PR body. It reads TASKS.md itself for stacks with open tasks. Do not re-implement or second-guess its checks; report what it prints.
 
 Also check every [/] (NEEDS HUMAN) line already in TASKS.md, not just ones reported this run -- per CLAUDE.md, check each one's PR merge state and archive+remove any that have since merged.
 
@@ -579,7 +579,7 @@ Likewise sweep every [x] (checked off) line in TASKS.md, not just ones reported 
 # so no TASKS.md edits and no archive file. Only nightlight-meta.json (and the
 # stack-notes sweep) go through the housekeeping commit + PR.
 build_housekeeping_prompt_github() {
-  local run_summary="$1" skipped_summary="$2" run="$3"
+  local run_summary="$1" skipped_summary="$2" run="$3" keep_args="${4:-}"
   local repo_flag=""
   [[ -n "$TS_GITHUB_REPO" ]] && repo_flag=" --repo $TS_GITHUB_REPO"
   local blocked needs_human agent_ready verify research
@@ -618,7 +618,7 @@ Also flag, never silently resolve, any open issue carrying contradictory labels 
 
 nightlight-meta.json still goes through git: create overnight/<YYYY-MM-DD>/r$run-housekeeping from main and make one commit that updates tasksCompleted/tasksBlocked in docs/nightlight-meta.json (create it with nextTaskNumber: 1, tasksCompleted: 0, tasksBlocked: 0 if missing) to reflect the issues closed as completed and newly labeled blocked this run, plus any stack-notes removals below. Open it as its own PR, chore: session housekeeping <date>, targeting main, listing the issue closes, label changes and flagged conflicts in the body. If there is nothing to commit, skip the commit and PR.
 
-Before opening that PR, also do the branch-cleanup sweep: check every docs/stack-notes/*.md file's Branch: lines for merge state and delete any branch whose PR already merged, locally and on origin (a git operation, not part of the housekeeping commit or PR; it happens even when the file is kept). After that, git rm each finished stack's docs/stack-notes/<stack>.md inside the housekeeping commit and list the removal in the PR body. A stack is finished only when ALL hold: every Branch: line's PR is MERGED; no open issue carries the stack's nl:stack:<name> label; no open PR has a head branch for this stack (gh pr list --state open); no task from the stack appears in the TASK_RESULT lines above. Keep the file if any check fails, if gh fails, or if the file has zero Branch: lines."
+Before opening that PR, also run the stack-notes sweep, one deterministic script: bash lib/stack-notes.sh <target-repo-path>$keep_args (run it from this repo, nightlight; the target repo is the --add-dir), adding one more --keep <name> for every stack that still has an open issue labeled nl:stack:<name>. It deletes merged stack branches locally and on origin and git rms each finished stack's docs/stack-notes/<stack>.md, staged but not committed, so include those removals in the housekeeping commit and list them in the PR body. Do not re-implement or second-guess its checks; report what it prints."
 
   printf '%s' "$p"
 }
@@ -627,7 +627,7 @@ Before opening that PR, also do the branch-cleanup sweep: check every docs/stack
 # every tracker write goes through the Linear MCP tools instead of gh issue.
 # PR state still comes from gh pr (the code lives on GitHub).
 build_housekeeping_prompt_linear() {
-  local run_summary="$1" skipped_summary="$2" run="$3"
+  local run_summary="$1" skipped_summary="$2" run="$3" keep_args="${4:-}"
   local blocked needs_human agent_ready verify research
   blocked="$(ts_linear_label blocked nl:blocked)"
   needs_human="$(ts_linear_label needsHuman nl:needs-human)"
@@ -664,7 +664,7 @@ Also flag, never silently resolve, any open issue carrying contradictory labels 
 
 nightlight-meta.json still goes through git: create overnight/<YYYY-MM-DD>/r$run-housekeeping from main and make one commit that updates tasksCompleted/tasksBlocked in docs/nightlight-meta.json (create it with nextTaskNumber: 1, tasksCompleted: 0, tasksBlocked: 0 if missing) to reflect the issues moved to Done and newly labeled blocked this run, plus any stack-notes removals below. Open it as its own PR, chore: session housekeeping <date>, targeting main, listing the status moves, label changes and flagged conflicts in the body. If there is nothing to commit, skip the commit and PR.
 
-Before opening that PR, also do the branch-cleanup sweep: check every docs/stack-notes/*.md file's Branch: lines for merge state and delete any branch whose PR already merged, locally and on origin (a git operation, not part of the housekeeping commit or PR; it happens even when the file is kept). After that, git rm each finished stack's docs/stack-notes/<stack>.md inside the housekeeping commit and list the removal in the PR body. A stack is finished only when ALL hold: every Branch: line's PR is MERGED; no open issue carries the stack's nl:stack:<name> label; no open PR has a head branch for this stack (gh pr list --state open); no task from the stack appears in the TASK_RESULT lines above. Keep the file if any check fails, if gh fails, or if the file has zero Branch: lines."
+Before opening that PR, also run the stack-notes sweep, one deterministic script: bash lib/stack-notes.sh <target-repo-path>$keep_args (run it from this repo, nightlight; the target repo is the --add-dir), adding one more --keep <name> for every stack that still has an open issue labeled nl:stack:<name>. It deletes merged stack branches locally and on origin and git rms each finished stack's docs/stack-notes/<stack>.md, staged but not committed, so include those removals in the housekeeping commit and list them in the PR body. Do not re-implement or second-guess its checks; report what it prints."
 
   printf '%s' "$p"
 }
@@ -989,7 +989,7 @@ run_repo() {
   local -A stack_branch=()
   local attempted=0 pr_skipped=0 consecutive_failures=0
   TASK_PR_CACHE=""
-  local run_summary="" skipped_summary=""
+  local run_summary="" skipped_summary="" ran_keep_args=""
   local session_calls=0 session_cost=0 session_duration=0 session_turns=0 session_cache_read=0 session_cache_creation=0 session_input=0 session_output=0
 
   # Folds one update_stats() call's US_* values into this run_repo()
@@ -1136,6 +1136,10 @@ run_repo() {
     fi
     run_summary="$run_summary
 $task_result"
+    # Stacks dispatched this run stay out of the stack-notes sweep's finished set.
+    if [[ "$stack" != "solo" && "$ran_keep_args" != *" --keep $stack"* ]]; then
+      ran_keep_args="$ran_keep_args --keep $stack"
+    fi
 
     local reported_branch
     reported_branch="$(sed -n "s/^TASK_RESULT: [^ ]* status=[^ ]* branch=\\([^ ]*\\).*/\\1/p" <<< "$task_result")"
@@ -1163,7 +1167,7 @@ $task_result"
     return 0
   fi
 
-  local housekeeping_prompt; housekeeping_prompt="$(build_housekeeping_prompt "$run_summary" "$skipped_summary" "$run_num")"
+  local housekeeping_prompt; housekeeping_prompt="$(build_housekeeping_prompt "$run_summary" "$skipped_summary" "$run_num" "$ran_keep_args")"
   echo "--- dispatching housekeeping ---"
   local hk_base="$logdir/r$run_num-housekeeping"
   local errlog="$hk_base.stderr.log"
