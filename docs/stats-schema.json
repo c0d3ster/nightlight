@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/c0d3ster/nightlight/docs/stats-schema.json",
   "title": "nightlight stats/<repo>.json and stats/<repo>-history.jsonl",
-  "description": "Local, gitignored cost/time reference for one target repo -- see README.md's stats.sh section. Written only by overnight.sh's update_stats() and record_session_totals(). There is no schema validator dependency in this repo (nightlight has none at all, by design); overnight.sh's validate_stats_shape() is a small hand-written jq structural check kept manually in sync with this file, not a generated one -- if you add or rename a field here, update that function too.",
+  "description": "Local, gitignored cost/time reference for one target repo -- see README.md's Stats section. Written only by overnight.sh's update_stats() and record_session_totals(). There is no schema validator dependency in this repo (nightlight has none at all, by design); overnight.sh's validate_stats_shape() is a small hand-written jq structural check kept manually in sync with this file, not a generated one -- if you add or rename a field here, update that function too.",
   "type": "object",
   "required": ["sessions", "total_cost_usd", "total_duration_s", "total_turns"],
   "properties": {
