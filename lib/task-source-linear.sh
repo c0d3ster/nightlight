@@ -159,3 +159,8 @@ ts_find_related() {
   jq -r '.data.issues.nodes[]
     | "\(if .state.type == "completed" or .state.type == "canceled" then "closed" else "open" end)\t\(.identifier)\t\(.title)"' <<< "$resp"
 }
+
+# Optional grouping hooks (docs/plans/multi-task-source.md 2.6): this source
+# has no milestone object, so both are no-ops. Callers need no declare -F guard.
+ts_ensure_group() { return 0; }
+ts_close_group() { return 0; }

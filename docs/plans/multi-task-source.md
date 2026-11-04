@@ -54,6 +54,9 @@ Extract `lib/task-source-<name>.sh`, sourced by `run_repo()` based on
   needs to know the source.
 - `ts_task_result_re(id)`: the regex that matches this task's own
   `TASK_RESULT` line.
+- Optional `ts_ensure_group(repo_path, stack, description)` and
+  `ts_close_group(repo_path, stack)`: map a non-solo stack to a tracker group
+  (GitHub milestone, see 2.6). No-op stubs in local and Linear.
 - `ts_find_related(repo_path, query)`: open AND closed items whose title or
   body match a candidate, with state and id. Used by the skills' dedupe step
   (see 1.6). Local: TASKS.md plus `docs/tasks-archive/*.md`. GitHub:
@@ -237,7 +240,21 @@ For each dispatched task, after confirming real PR/branch state:
 The merge-based close is why PR bodies don't use `Closes #n`: it keeps the
 close event in one place, with the label cleanup.
 
-### 2.6 What's intentionally not used
+### 2.6 Milestones, and what's intentionally not used
+
+Each non-solo stack is also a GitHub milestone (title equals the stack name;
+no separate phase level, `solo` gets none). The `nl:stack:<name>` label stays
+authoritative for dispatch; the milestone is a progress view on top.
+
+Shared optional contract in `lib/task-source.sh`: `ts_ensure_group <repo>
+<stack> <description>` and `ts_close_group <repo> <stack>`. Local and Linear
+define no-op stubs, so callers need no `declare -F` guard. GitHub finds the
+milestone by title (`gh api repos/<repo>/milestones?state=all --paginate`),
+creates it if missing, reopens it if closed, and closes it on
+`ts_close_group`. Both skip `solo`, are idempotent, and warn then continue on
+a failed `gh api` call. `/plan-tasks` ensures the milestone and sets it on
+each issue next to the stack label; housekeeping closes it when the stack is
+finished (same condition as the stack-notes sweep) and reopens it on resume.
 
 GitHub sub-issues and issue dependencies ("blocked by") exist, but the plan
 keeps stacks as `nl:stack:<name>` labels so the model matches TASKS.md and

@@ -8,6 +8,13 @@ source lib/env.sh
 # and TS_LABELS_JSON (the raw optional labels object, "{}" if absent) for the
 # modules to read. Only the chosen source's block is read.
 # github.repo is optional (the github module falls back to origin).
+#
+# Optional grouping contract (every module defines both, so callers need no
+# `declare -F` guard): ts_ensure_group <repo> <stack> <description> makes sure
+# a tracker group for the stack exists and is open; ts_close_group <repo>
+# <stack> closes it. Both skip `solo`, are idempotent, and warn instead of
+# failing, since the nl:stack label stays authoritative. GitHub maps a stack to
+# a milestone; local and linear are no-op stubs.
 load_task_source() {
   local repo_path="$1" meta="$1/docs/nightlight-meta.json"
   TASK_SOURCE=local TS_GITHUB_REPO="" TS_LINEAR_TEAM_ID="" TS_LABELS_JSON="{}"

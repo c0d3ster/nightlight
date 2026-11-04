@@ -90,3 +90,8 @@ ts_find_related() {
     | sed -E 's#^.*/([^/]+\.md):([0-9]+):(.*)$#archived\tdocs/tasks-archive/\1:\2\t\3#'
   return 0
 }
+
+# Optional grouping hooks (docs/plans/multi-task-source.md 2.6): this source
+# has no milestone object, so both are no-ops. Callers need no declare -F guard.
+ts_ensure_group() { return 0; }
+ts_close_group() { return 0; }
