@@ -16,6 +16,13 @@ source lib/env.sh
 # failing, since the nl:stack label stays authoritative. GitHub maps a stack to
 # a milestone; local and linear are no-op stubs (Linear milestones are
 # managed through the MCP tools in the prompts, see CLAUDE.md).
+#
+# Remote modules (github, linear) also define the PR-less housekeeping hooks:
+# ts_stack_notes_export <repo> <dir> [stack] writes <dir>/<stack>.md (entries)
+# and <stack>.ref (the tracker object) from the tracker; ts_stack_notes_write_instructions
+# <stack> <ref> is the prompt text telling a task session how to write its entry;
+# ts_stats_counts <repo> prints "<overnight> <manual> <blocked>" for stats.sh.
+# Local keeps file-based notes and meta counters and defines none of them.
 load_task_source() {
   local repo_path="$1" meta="$1/docs/nightlight-meta.json"
   TASK_SOURCE=local TS_GITHUB_REPO="" TS_LINEAR_TEAM_ID="" TS_LABELS_JSON="{}"

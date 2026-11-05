@@ -95,7 +95,7 @@ fork per source. The mapping from TASKS.md concepts:
 | `[stack: <name>]` | label `nl:stack:<name>` (no stack label = inherit previous, `nl:stack:solo` = solo) |
 | `[!]` blocked, `[/]` NEEDS HUMAN | labels `nl:blocked`, `nl:needs-human`, set only by housekeeping |
 | `[ ]`/`[x]` | the source's native open/closed state stays authoritative, never shadowed by a label |
-| `docs/stack-notes/<stack>.md` | unchanged, stays a file in the target repo |
+| `docs/stack-notes/<stack>.md` | held by the tracker (see 2.7): a Linear document per stack, a comment thread on a per-stack tracking issue on GitHub. Local mode keeps the file |
 | `docs/tasks-archive/` | not used; the source's own closed-issue history is the archive |
 
 Labels are configurable via a `labels` block (keys `agentReady`, `verify`,
@@ -151,9 +151,9 @@ source-agnostic. Per source:
 
 - **Local**: unchanged (TASKS.md + archive + meta in one commit).
 - **Remote**: update labels / close issues / comment PR links through the
-  source's own write path. `tasksCompleted`/`tasksBlocked` in
-  `docs/nightlight-meta.json` still need their own small housekeeping
-  commit + PR, since that file is nightlight bookkeeping and not the backlog.
+  source's own write path. Nothing is left to commit on a normal run (see
+  2.7): counters come from the `nl:overnight` label, stack notes live in the
+  tracker, so housekeeping opens a PR only on an abnormal run.
 
 `stats/*.json` needs no changes.
 
@@ -451,3 +451,48 @@ GitHub steps 4 to 9:
 Do not implement directly from this plan. Feed it into `/plan-tasks` via
 `## Discovered` candidates, per this repo's rule that decomposition happens
 in a separate planning session.
+
+### 2.7 PR-less remote housekeeping (NITE-19)
+
+Counters and stack notes used to force a housekeeping PR in remote modes. Both
+now live in the tracker.
+
+- **Counters from labels.** Housekeeping adds `nl:overnight` (auto-created) when
+  it closes an issue whose `overnight/*` task PR merged. `stats.sh` queries the
+  tracker: overnight = closed issues with `nl:overnight`, manual = closed issues
+  with a section label but no `nl:overnight`, blocked = open issues with
+  `nl:blocked` (live). Linear closed issues are paged 100 at a time. Local mode
+  still reads `tasksCompleted`/`tasksBlocked` from the meta file. Remote modes
+  stop writing them. The label name is `nl:overnight` (named after the command,
+  not the hour). Work with no issue is invisible, as with any tracker count.
+- **Stack notes in the tracker.** Linear: one document titled
+  `stack-notes: <stack>`, attached to the stack's Project (found through its
+  milestone, see 2.6), or to the team when the stack has no Project. A task
+  appends its entry with `save_document` and an atomic `append` patch. GitHub:
+  a tracking issue `stack-notes: <stack>` (label `nl:stack-notes`, no section
+  label so it is never dispatched or counted); each entry is one comment. Writes
+  stay in the `claude -p` subprocess, reads are GraphQL / `gh` in bash
+  (`ts_stack_notes_export`).
+- **Reading.** The runner embeds the latest live entry in a stacked task's
+  prompt and takes the base branch from the last live `Branch:` line. An entry
+  is stale, and skipped, when its branch no longer exists and never had a PR (a
+  discarded retry attempt). Merged-and-deleted branches have a PR and stay live.
+  If the tracker can't be read the task is skipped, never started with a
+  second notes object.
+- **Legacy files.** A `docs/stack-notes/<stack>.md` that predates this is read
+  as a fallback only while the tracker has no notes for that stack; the first
+  stacked task then starts the tracker notes. Once that stack is finished the
+  sweep `git rm`s the legacy file.
+- **Finishing.** `lib/stack-notes.sh --remote <dir>` deletes merged stack
+  branches and prints `finished <stack>`; housekeeping retitles that stack's
+  notes `[done] stack-notes: <stack>` (never deletes them). A resumed stack's
+  first task drops the prefix again.
+- **Abnormal run.** A normal remote run commits nothing and opens no PR. The
+  only abnormal case is a `removed-legacy` line from the sweep (a staged file
+  removal); then, and only then, housekeeping commits it and opens a
+  `chore: session housekeeping` PR. Failed tracker calls and label conflicts go
+  to issue comments and the final message.
+- **Testing.** The trackers are not exercised live; the helpers are checked
+  against stubbed `gh` / `ts_stack_notes_export` in a scratch repo (see the
+  stack-notes entry for NITE-19), and the Linear queries were read-only
+  verified against the real API.

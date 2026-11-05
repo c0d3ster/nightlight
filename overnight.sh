@@ -418,10 +418,10 @@ resolve_base_branch() {
     return 0
   fi
 
-  local notes_file="$repo_path/docs/stack-notes/$stack.md"
-  if [[ -f "$notes_file" ]]; then
+  local notes_text="${5:-}"
+  if [[ -n "$notes_text" ]]; then
     local prior_branch
-    prior_branch="$(grep '^Branch: ' "$notes_file" | tail -n1 | sed 's/^Branch: //')"
+    prior_branch="$(grep '^Branch: ' <<< "$notes_text" | tail -n1 | sed 's/^Branch: //')"
     if [[ -n "$prior_branch" ]]; then
       git -C "$repo_path" fetch --quiet origin "$prior_branch" 2>/dev/null || true
       if git -C "$repo_path" show-ref --verify --quiet "refs/heads/$prior_branch" \
@@ -440,7 +440,7 @@ resolve_base_branch() {
   echo "$default_branch"
 }
 
-# Prints the part of a stack-notes file a stacked task's prompt embeds: the
+# Prints the part of a stack's notes (stdin) a stacked task's prompt embeds: the
 # last "## " block (the immediate predecessor's entry), then a list of the
 # earlier "## " headings. A file with no "## " heading is printed whole.
 extract_latest_stack_note() {
@@ -456,14 +456,84 @@ extract_latest_stack_note() {
         for (i = 1; i < n; i++) print "- " substr(heads[i], 4)
       }
     }
-  ' "$1"
+  '
+}
+
+# Is $2 still a branch that exists (local or origin) or one that has a PR? A
+# retry discards an interrupted attempt's branch, which never had a PR, so its
+# stack-notes entry is stale. Merged branches deleted by the sweep still have
+# a PR and stay live. A gh failure counts as live (never drop an entry on doubt).
+stack_branch_is_live() {
+  local repo_path="$1" b="$2" n
+  git -C "$repo_path" show-ref --verify --quiet "refs/heads/$b" && return 0
+  git -C "$repo_path" show-ref --verify --quiet "refs/remotes/origin/$b" && return 0
+  n="$(cd "$repo_path" && gh pr list --head "$b" --state all --json number --jq length 2>/dev/null)" || return 0
+  [[ "$n" != "0" ]]
+}
+
+# Filters stack notes (stdin) down to live entries: drops each "## " entry whose
+# "Branch: " branch is gone and never had a PR. Entries with no Branch: line
+# stay. Prints the kept text.
+filter_live_entries() {
+  local repo_path="$1" block="" line
+  git -C "$repo_path" fetch --quiet --prune origin 2>/dev/null || true
+  flush_block() {
+    [[ -n "$block" ]] || return 0
+    local b; b="$(sed -n 's/^Branch: //p' <<< "$block" | head -n1)"
+    b="${b%$'\r'}"
+    if [[ -z "$b" ]] || stack_branch_is_live "$repo_path" "$b"; then
+      printf '%s\n' "$block"
+    else
+      echo "warn: ignoring stack-notes entry for discarded branch '$b'" >&2
+    fi
+    block=""
+  }
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line="${line%$'\r'}"
+    if [[ "$line" == "## "* ]]; then flush_block; fi
+    block="${block:+$block
+}$line"
+  done
+  flush_block
+}
+
+# Loads stack $2's notes for a task prompt into STACK_NOTES_ALL (live entries
+# as "## " blocks, newest last) and STACK_NOTES_REF (the tracker object to
+# append to, empty if none). Plain globals, so call it without $(...). Local
+# mode reads docs/stack-notes/<stack>.md. Remote modes read the tracker; with
+# no tracker notes for the stack, a legacy docs/stack-notes/<stack>.md left from
+# before notes moved is read as a fallback (read only, the session starts the
+# tracker notes on its own entry). Returns 1 if the tracker can't be read, so
+# the caller skips the task rather than let it start a duplicate notes object.
+stack_notes_load() {
+  local repo_path="$1" stack="$2" dir legacy="$1/docs/stack-notes/$2.md"
+  STACK_NOTES_ALL="" STACK_NOTES_REF=""
+  if [[ "$TASK_SOURCE" == local ]]; then
+    [[ -f "$legacy" ]] && STACK_NOTES_ALL="$(tr -d '\r' < "$legacy")"
+    return 0
+  fi
+  dir="$(mktemp -d)"
+  if ! ts_stack_notes_export "$repo_path" "$dir" "$stack"; then
+    rm -rf "$dir"
+    return 1
+  fi
+  if [[ -e "$dir/$stack.ref" ]]; then
+    STACK_NOTES_REF="$(tr -d '\r' < "$dir/$stack.ref")"
+    STACK_NOTES_ALL="$(filter_live_entries "$repo_path" < "$dir/$stack.md")"
+  elif [[ -f "$legacy" ]]; then
+    STACK_NOTES_ALL="$(tr -d '\r' < "$legacy")"
+  fi
+  rm -rf "$dir"
 }
 
 # Builds the prompt for a single task's fresh subprocess: the task text
 # verbatim, stack/stack-notes context (or the solo/no-stack-notes rule), any
 # --extra-instructions, and the TASK_RESULT contract housekeeping consumes.
 build_task_prompt() {
-  local task_text="$1" num="$2" stack="$3" base_branch="$4" stack_notes="$5" position="$6" run="$7" retried="${8:-}"
+  local task_text="$1" num="$2" stack="$3" base_branch="$4" stack_notes="$5" position="$6" run="$7" retried="${8:-}" notes_ref="${9:-}"
+  local remote_notes=0
+  [[ "$TASK_SOURCE" != local ]] && remote_notes=1
+  local entry_format="a heading with this task's number and title, a \"Branch: <your-branch-name>\" line, key decisions, interfaces/exports created, and any deviation from acceptance criteria"
 
   local p="A target repo has been added to this session via --add-dir. This is exactly ONE task from that repo's TASKS.md, dispatched by nightlight's overnight runner as its own fresh session -- you have no memory of any other task, past or future, in this run. Implement it per the \"Overnight Agent Workflow\" rules in the CLAUDE.md of THIS repo (nightlight, the one this session was launched from) -- branching, quality gates, PR, and NEEDS HUMAN/blocked handling all still apply exactly as documented there. Work this ONE task only, then stop: do not open, read for other purposes, or act on any other TASKS.md item, and do not perform end-of-session housekeeping -- a separate session handles that once, after every task dispatched this run is done.
 
@@ -478,19 +548,33 @@ This is run $run of today, dispatch position $position in it, so name your branc
 
 This task is [stack: solo]: branch from the repo's default branch (currently checked out, at \"$base_branch\"), independent of every other task. Do not create or touch any docs/stack-notes/ file."
   elif [[ -n "$stack_notes" ]]; then
+    local where="docs/stack-notes/$stack.md" older="The older entries are in docs/stack-notes/$stack.md on disk; read them only if you need them" finish
+    if [[ "$remote_notes" == 1 ]]; then
+      where="the stack's notes in the tracker"
+      older="The older entries are in the tracker notes; fetch them only if you need them"
+      finish="Before finishing, add your own entry to the stack's tracker notes in the same format used above (a \"## \" heading, with \"###\" or lower for any sub-headings inside the entry): $entry_format. $(ts_stack_notes_write_instructions "$stack" "$notes_ref") Do not create or edit docs/stack-notes/$stack.md, and do not commit the entry."
+    else
+      finish="Before finishing, append your own entry to docs/stack-notes/$stack.md (never rewrite earlier entries) in the same format used above (a \"## \" heading, with \"###\" or lower for any sub-headings inside the entry): $entry_format. Commit it as part of this task's own work, on this task's own branch."
+    fi
     p="$p
 
-This task continues stack \"$stack\". Branch your work from \"$base_branch\" (the latest branch already in this stack) instead of the repo's default branch. Below is the previous task's entry from docs/stack-notes/$stack.md (written by earlier tasks in this same stack), followed by the headings of any older entries -- use it as your context instead of inspecting their full diffs or commit history. The older entries are in docs/stack-notes/$stack.md on disk; read them only if you need them:
+This task continues stack \"$stack\". Branch your work from \"$base_branch\" (the latest branch already in this stack) instead of the repo's default branch. Below is the previous task's entry from $where (written by earlier tasks in this same stack), followed by the headings of any older entries -- use it as your context instead of inspecting their full diffs or commit history. $older:
 
 ---
 $stack_notes
 ---
 
-Before finishing, append your own entry to docs/stack-notes/$stack.md (never rewrite earlier entries) in the same format used above (a \"## \" heading, with \"###\" or lower for any sub-headings inside the entry): a heading with this task's number and title, a \"Branch: <your-branch-name>\" line, key decisions, interfaces/exports created, and any deviation from acceptance criteria. Commit it as part of this task's own work, on this task's own branch."
+$finish"
   else
+    local start
+    if [[ "$remote_notes" == 1 ]]; then
+      start="Before finishing, write your own entry to the stack's tracker notes (a \"## \" heading, then $entry_format -- later tasks in this stack will read it instead of your diff or commit history). $(ts_stack_notes_write_instructions "$stack" "$notes_ref") Do not create docs/stack-notes/$stack.md, and do not commit the entry."
+    else
+      start="Before finishing, create docs/stack-notes/$stack.md with your own entry: $entry_format -- later tasks in this stack will read this file instead of your diff or commit history. Commit it as part of this task's own work, on this task's own branch."
+    fi
     p="$p
 
-This task starts stack \"$stack\". Branch from the repo's default branch (currently checked out, at \"$base_branch\"). Before finishing, create docs/stack-notes/$stack.md with your own entry: a heading with this task's number and title, a \"Branch: <your-branch-name>\" line, key decisions, interfaces/exports created, and any deviation from acceptance criteria -- later tasks in this stack will read this file instead of your diff or commit history. Commit it as part of this task's own work, on this task's own branch."
+This task starts stack \"$stack\". Branch from the repo's default branch (currently checked out, at \"$base_branch\"). $start"
   fi
 
   if [[ "$TASK_SOURCE" == "github" ]]; then
@@ -539,13 +623,13 @@ Use status=done when the PR is open and every acceptance criterion is met; statu
 # dispatched task's TASK_RESULT line (collected by the caller across the
 # loop), plus which tasks were filtered out and left untouched this run.
 build_housekeeping_prompt() {
-  local run_summary="$1" skipped_summary="$2" run="$3" keep_args="${4:-}"
+  local run_summary="$1" skipped_summary="$2" run="$3" keep_args="${4:-}" notes_dir="${5:-}"
   if [[ "$TASK_SOURCE" == "github" ]]; then
-    build_housekeeping_prompt_github "$run_summary" "$skipped_summary" "$run" "$keep_args"
+    build_housekeeping_prompt_github "$run_summary" "$skipped_summary" "$run" "$keep_args" "$notes_dir"
     return
   fi
   if [[ "$TASK_SOURCE" == "linear" ]]; then
-    build_housekeeping_prompt_linear "$run_summary" "$skipped_summary" "$run" "$keep_args"
+    build_housekeeping_prompt_linear "$run_summary" "$skipped_summary" "$run" "$keep_args" "$notes_dir"
     return
   fi
   local p="A target repo has been added to this session via --add-dir. This session runs ONLY the end-of-session housekeeping step from the \"Overnight Agent Workflow\" rules in CLAUDE.md (this repo, nightlight's own) -- this run just finished dispatching one fresh session per task, so you were not present for any of them. Do not attempt any task work yourself. This is run $run of today, so name the housekeeping branch overnight/<YYYY-MM-DD>/r$run-housekeeping.
@@ -576,10 +660,15 @@ Likewise sweep every [x] (checked off) line in TASKS.md, not just ones reported 
 }
 
 # GitHub-mode variant of build_housekeeping_prompt: the issues are the backlog,
-# so no TASKS.md edits and no archive file. Only nightlight-meta.json (and the
-# stack-notes sweep) go through the housekeeping commit + PR.
+# so no TASKS.md edits, no archive file, no counters (stats.sh counts from the
+# nl:overnight label) and no stack-notes file (the tracker holds them). A normal
+# run is tracker writes plus branch deletion with no PR; see the "Abnormal run"
+# paragraph for the one case that commits.
 build_housekeeping_prompt_github() {
-  local run_summary="$1" skipped_summary="$2" run="$3" keep_args="${4:-}"
+  local run_summary="$1" skipped_summary="$2" run="$3" keep_args="${4:-}" notes_dir="${5:-}"
+  local overnight_label stack_notes_label
+  overnight_label="$(ts_gh_label overnight nl:overnight)"
+  stack_notes_label="$(ts_gh_label stackNotes nl:stack-notes)"
   local repo_flag=""
   [[ -n "$TS_GITHUB_REPO" ]] && repo_flag=" --repo $TS_GITHUB_REPO"
   local blocked needs_human agent_ready verify research
@@ -605,22 +694,24 @@ $skipped_summary"
   p="$p
 
 Treat the TASK_RESULT lines above as a starting point, not ground truth -- a task session can misreport, so confirm each PR/branch's actual state with git/gh before changing any issue (e.g. gh pr view <pr> --json state,mergedAt, or gh pr list --head <branch> --state all). Then, per attempted task:
-- PR merged: gh issue close <n> --reason completed with a comment linking the PR, and remove any status labels ($blocked, $needs_human) that no longer apply. Wrap issue numbers in backticks in comments you write.
+- PR merged: gh issue close <n> --reason completed with a comment linking the PR, add the $overnight_label label (see Counters below), and remove any status labels ($blocked, $needs_human) that no longer apply. Wrap issue numbers in backticks in comments you write.
 - PR open, not merged: leave the issue open; no label change unless it reported needs-human.
 - Reported done with pr=none (a Verify task that found the work already exists): gh issue close <n> --reason completed with the note as the comment.
 - Reported blocked (no PR): add the $blocked label and comment the reason from the note.
 - Reported needs-human: add the $needs_human label and comment the exact steps (from the task PR description), then leave it open.
 Never close an issue whose PR has not merged, and never use a closing keyword to do it. gh rejects labels that don't exist, so before adding $blocked or $needs_human, create it if the repo lacks it (gh label create <name>$repo_flag).
 
-Also sweep every other open issue labeled $agent_ready, $verify or $research (this includes any also labeled $needs_human), not just ones reported this run: an earlier run's task PR may have merged since, and nothing else closes the issue. Task branches are named overnight/<date>/r<R>-<PP>-t<n>-<slug>, so find an issue's PR with gh pr list --state all --json number,state,headRefName,mergedAt$repo_flag and match -t<n>- in headRefName. If that PR merged, close the issue as completed with a PR-link comment and remove any status labels. If it is still open, or there is no PR, leave the issue alone.
+Also sweep every other open issue labeled $agent_ready, $verify or $research (this includes any also labeled $needs_human), not just ones reported this run: an earlier run's task PR may have merged since, and nothing else closes the issue. Task branches are named overnight/<date>/r<R>-<PP>-t<n>-<slug>, so find an issue's PR with gh pr list --state all --json number,state,headRefName,mergedAt$repo_flag and match -t<n>- in headRefName. If that PR merged, close the issue as completed with a PR-link comment, add the $overnight_label label and remove any status labels. If it is still open, or there is no PR, leave the issue alone.
 
-Also flag, never silently resolve, any open issue carrying contradictory labels (e.g. $blocked together with $needs_human, or more than one section label): comment on the issue describing the conflict and list it in the housekeeping PR body, but change no labels.
+Also flag, never silently resolve, any open issue carrying contradictory labels (e.g. $blocked together with $needs_human, or more than one section label): comment on the issue describing the conflict and mention it in your final message, but change no labels.
 
-nightlight-meta.json still goes through git: create overnight/<YYYY-MM-DD>/r$run-housekeeping from main and make one commit that updates tasksCompleted/tasksBlocked in docs/nightlight-meta.json (create it with nextTaskNumber: 1, tasksCompleted: 0, tasksBlocked: 0 if missing) to reflect the issues closed as completed and newly labeled blocked this run, plus any stack-notes removals below. Open it as its own PR, chore: session housekeeping <date>, targeting main, listing the issue closes, label changes and flagged conflicts in the body. If there is nothing to commit, skip the commit and PR.
+Counters: whenever you close an issue because its overnight/* task PR merged (the per-task PR-merged case and the sweep above, not the pr=none case), also add the $overnight_label label in the same step (gh issue edit <n> --add-label $overnight_label$repo_flag; create the label first with gh label create $overnight_label$repo_flag if the repo lacks it). stats.sh counts completions from that label, so do NOT touch docs/nightlight-meta.json or write any counter.
 
-Before opening that PR, also run the stack-notes sweep, one deterministic script: bash lib/stack-notes.sh <target-repo-path>$keep_args (run it from this repo, nightlight; the target repo is the --add-dir), adding one more --keep <name> for every stack that still has an open issue labeled nl:stack:<name>. It deletes merged stack branches locally and on origin and git rms each finished stack's docs/stack-notes/<stack>.md, staged but not committed, so include those removals in the housekeeping commit and list them in the PR body. Do not re-implement or second-guess its checks; report what it prints.
+Stack notes live in the tracker, one tracking issue per stack titled \"stack-notes: <stack>\" (label $stack_notes_label), not in a file. After all the closes above, run the stack-notes sweep, one deterministic script: bash lib/stack-notes.sh <target-repo-path> --remote ${notes_dir:-<notes-dir>}$keep_args (run it from this repo, nightlight; the target repo is the --add-dir), adding one more --keep <name> for every stack that still has an open issue labeled nl:stack:<name>. It deletes merged stack branches locally and on origin and prints \"finished <stack>\" for each finished stack. For each finished stack, retitle its tracking issue: find it with gh issue list --label $stack_notes_label --state all --json number,title$repo_flag and run gh issue edit <number> --title \"[done] stack-notes: <stack>\"$repo_flag (skip one already prefixed [done]). Do not re-implement or second-guess the sweep's checks; report what it prints in your final message.
 
-Milestones: each non-solo stack is a GitHub milestone titled with the stack name. For every stack the sweep just reported as finished (same condition: every Branch: PR merged, no open nl:stack:<name> issue), close its milestone: find it with gh api 'repos/<owner>/<repo>/milestones?state=all' --paginate, then gh api -X PATCH repos/<owner>/<repo>/milestones/<number> -f state=closed (skip it if already closed). Never touch solo, and never close a milestone for a stack the sweep kept. A stack resumed this run (dispatched, or with an open nl:stack issue) whose milestone is closed gets reopened with -f state=open. If a gh api call fails, note it in the PR body and continue; the label is authoritative."
+Abnormal run: a normal run commits nothing and opens NO PR; the tracker writes above and the branch deletions are the whole job. The one abnormal case is a \"removed-legacy <stack>\" line from the sweep, a docs/stack-notes/<stack>.md file left from before notes moved to the tracker, already staged with git rm. Only then create overnight/<YYYY-MM-DD>/r$run-housekeeping from main, commit the staged removals, and open a PR chore: session housekeeping <date> targeting main, listing the removed files in the body. Otherwise create no branch, no commit and no PR. Anything else odd (a failed gh call, a flagged label conflict) goes in your final message and the issue comments, not a PR.
+
+Milestones: each non-solo stack is a GitHub milestone titled with the stack name. For every stack the sweep just reported as finished (same condition: every Branch: PR merged, no open nl:stack:<name> issue), close its milestone: find it with gh api 'repos/<owner>/<repo>/milestones?state=all' --paginate, then gh api -X PATCH repos/<owner>/<repo>/milestones/<number> -f state=closed (skip it if already closed). Never touch solo, and never close a milestone for a stack the sweep kept. A stack resumed this run (dispatched, or with an open nl:stack issue) whose milestone is closed gets reopened with -f state=open. If a gh api call fails, note it in your final message and continue; the label is authoritative."
 
   printf '%s' "$p"
 }
@@ -629,7 +720,9 @@ Milestones: each non-solo stack is a GitHub milestone titled with the stack name
 # every tracker write goes through the Linear MCP tools instead of gh issue.
 # PR state still comes from gh pr (the code lives on GitHub).
 build_housekeeping_prompt_linear() {
-  local run_summary="$1" skipped_summary="$2" run="$3" keep_args="${4:-}"
+  local run_summary="$1" skipped_summary="$2" run="$3" keep_args="${4:-}" notes_dir="${5:-}"
+  local overnight_label
+  overnight_label="$(ts_linear_label overnight nl:overnight)"
   local blocked needs_human agent_ready verify research
   blocked="$(ts_linear_label blocked nl:blocked)"
   needs_human="$(ts_linear_label needsHuman nl:needs-human)"
@@ -638,7 +731,7 @@ build_housekeeping_prompt_linear() {
   research="$(ts_linear_label research nl:research)"
   local p="A target repo has been added to this session via --add-dir. This session runs ONLY the end-of-session housekeeping step from the \"Overnight Agent Workflow\" rules in CLAUDE.md (this repo, nightlight's own) -- this run just finished dispatching one fresh session per task, so you were not present for any of them. Do not attempt any task work yourself. This is run $run of today, so name the housekeeping branch overnight/<YYYY-MM-DD>/r$run-housekeeping.
 
-This repo's backlog is Linear issues (taskSource \"linear\", team $TS_LINEAR_TEAM_ID): the issues, not TASKS.md, are the task list. Do NOT create or edit TASKS.md or any docs/tasks-archive/ file, and skip the TASKS.md-specific maintenance rules in CLAUDE.md. Task ids below are Linear identifiers (e.g. ENG-142). Make every tracker change through the Linear MCP tools (mcp__linear__*: list_issues, get_issue, save_issue, save_comment, list_issue_labels, create_issue_label, list_issue_statuses; load their schemas first), never gh issue. gh is only for PR and branch state.
+This repo's backlog is Linear issues (taskSource \"linear\", team $TS_LINEAR_TEAM_ID): the issues, not TASKS.md, are the task list. Do NOT create or edit TASKS.md or any docs/tasks-archive/ file, and skip the TASKS.md-specific maintenance rules in CLAUDE.md. Task ids below are Linear identifiers (e.g. ENG-142). Make every tracker change through the Linear MCP tools (mcp__linear__*: list_issues, get_issue, save_issue, save_comment, list_issue_labels, create_issue_label, list_issue_statuses, list_documents, save_document; load their schemas first), never gh issue. gh is only for PR and branch state.
 
 Here is what each dispatched task's own session reported when it finished, verbatim (one TASK_RESULT line per task attempted this run):
 ${run_summary:-"(no tasks were attempted this run)"}"
@@ -653,22 +746,24 @@ $skipped_summary"
   p="$p
 
 Treat the TASK_RESULT lines above as a starting point, not ground truth -- a task session can misreport, so confirm each PR/branch's actual state with git/gh before changing any issue (e.g. gh pr view <pr> --json state,mergedAt, or gh pr list --head <branch> --state all). Then, per attempted task:
-- PR merged: save_issue to move it to the team's Done (completed-type) status and drop any status labels ($blocked, $needs_human) that no longer apply, plus save_comment linking the PR. Labels set through save_issue replace the whole list, so read the issue's current labels first and resend the ones you keep. Wrap task ids in backticks in comments you write.
+- PR merged: save_issue to move it to the team's Done (completed-type) status, add the $overnight_label label (see Counters below) and drop any status labels ($blocked, $needs_human) that no longer apply, plus save_comment linking the PR. Labels set through save_issue replace the whole list, so read the issue's current labels first and resend the ones you keep. Wrap task ids in backticks in comments you write.
 - PR open, not merged: leave the issue's status alone; no label change unless it reported needs-human.
 - Reported done with pr=none (a Verify task that found the work already exists): move it to Done with the note as the comment.
 - Reported blocked (no PR): add the $blocked label and save_comment the reason from the note.
 - Reported needs-human: add the $needs_human label and save_comment the exact steps (from the task PR description), then leave it open.
 Never move an issue to Done unless its PR merged (or it is the pr=none case above). Before adding $blocked or $needs_human, create it with create_issue_label if list_issue_labels shows the team lacks it.
 
-Also sweep every other open issue labeled $agent_ready, $verify or $research (this includes any also labeled $needs_human), not just ones reported this run: an earlier run's task PR may have merged since, and nothing else moves the issue. Task branches are named overnight/<date>/r<R>-<PP>-t<id>-<slug>, so find an issue's PR with gh pr list --state all --json number,state,headRefName,mergedAt and match the id case-insensitively in headRefName. If that PR merged, move the issue to Done with a PR-link comment and remove any status labels. If it is still open, or there is no PR, leave the issue alone.
+Also sweep every other open issue labeled $agent_ready, $verify or $research (this includes any also labeled $needs_human), not just ones reported this run: an earlier run's task PR may have merged since, and nothing else moves the issue. Task branches are named overnight/<date>/r<R>-<PP>-t<id>-<slug>, so find an issue's PR with gh pr list --state all --json number,state,headRefName,mergedAt and match the id case-insensitively in headRefName. If that PR merged, move the issue to Done with a PR-link comment, add the $overnight_label label and remove any status labels. If it is still open, or there is no PR, leave the issue alone.
 
-Also flag, never silently resolve, any open issue carrying contradictory labels (e.g. $blocked together with $needs_human, or more than one section label): save_comment describing the conflict and list it in the housekeeping PR body, but change no labels.
+Also flag, never silently resolve, any open issue carrying contradictory labels (e.g. $blocked together with $needs_human, or more than one section label): save_comment describing the conflict and mention it in your final message, but change no labels.
 
-nightlight-meta.json still goes through git: create overnight/<YYYY-MM-DD>/r$run-housekeeping from main and make one commit that updates tasksCompleted/tasksBlocked in docs/nightlight-meta.json (create it with nextTaskNumber: 1, tasksCompleted: 0, tasksBlocked: 0 if missing) to reflect the issues moved to Done and newly labeled blocked this run, plus any stack-notes removals below. Open it as its own PR, chore: session housekeeping <date>, targeting main, listing the status moves, label changes and flagged conflicts in the body. If there is nothing to commit, skip the commit and PR.
+Counters: whenever you move an issue to Done because its overnight/* task PR merged (the per-task PR-merged case and the sweep above, not the pr=none case), also add the $overnight_label label in the same save_issue call (create it with create_issue_label if list_issue_labels shows the team lacks it). stats.sh counts completions from that label, so do NOT touch docs/nightlight-meta.json or write any counter.
 
-Before opening that PR, also run the stack-notes sweep, one deterministic script: bash lib/stack-notes.sh <target-repo-path>$keep_args (run it from this repo, nightlight; the target repo is the --add-dir), adding one more --keep <name> for every stack that still has an open issue labeled nl:stack:<name>. It deletes merged stack branches locally and on origin and git rms each finished stack's docs/stack-notes/<stack>.md, staged but not committed, so include those removals in the housekeeping commit and list them in the PR body. Do not re-implement or second-guess its checks; report what it prints.
+Stack notes live in the tracker, one Linear document per stack titled \"stack-notes: <stack>\" (in the stack's Project, or on the team when it has none), not in a file. After all the Done moves above, run the stack-notes sweep, one deterministic script: bash lib/stack-notes.sh <target-repo-path> --remote ${notes_dir:-<notes-dir>}$keep_args (run it from this repo, nightlight; the target repo is the --add-dir), adding one more --keep <name> for every stack that still has an open issue labeled nl:stack:<name>. It deletes merged stack branches locally and on origin and prints \"finished <stack>\" for each finished stack. For each finished stack, retitle its document: find it with list_documents (query \"stack-notes: <stack>\"), then save_document with its id and title \"[done] stack-notes: <stack>\" (skip one already prefixed [done]; never resend its content). Do not re-implement or second-guess the sweep's checks; report what it prints in your final message.
 
-Milestones (read only): each non-solo stack maps to a Linear project milestone named after the stack, set on its issues by /plan-tasks. Never create a Project or milestone, and never touch solo. Linear derives a milestone's completed or open status from its issues (save_milestone has no state), so there is nothing to close or reopen. For each stack the sweep reported finished or that was dispatched this run, look the milestone up with list_projects (includeMilestones, team $TS_LINEAR_TEAM_ID) and just note in the PR body any stack whose milestone is missing or appears in more than one Project. Skip quietly if it is fine."
+Abnormal run: a normal run commits nothing and opens NO PR; the tracker writes above and the branch deletions are the whole job. The one abnormal case is a \"removed-legacy <stack>\" line from the sweep, a docs/stack-notes/<stack>.md file left from before notes moved to the tracker, already staged with git rm. Only then create overnight/<YYYY-MM-DD>/r$run-housekeeping from main, commit the staged removals, and open a PR chore: session housekeeping <date> targeting main, listing the removed files in the body. Otherwise create no branch, no commit and no PR. Anything else odd (a failed tracker call, a flagged label conflict) goes in your final message and the issue comments, not a PR.
+
+Milestones (read only): each non-solo stack maps to a Linear project milestone named after the stack, set on its issues by /plan-tasks. Never create a Project or milestone, and never touch solo. Linear derives a milestone's completed or open status from its issues (save_milestone has no state), so there is nothing to close or reopen. For each stack the sweep reported finished or that was dispatched this run, look the milestone up with list_projects (includeMilestones, team $TS_LINEAR_TEAM_ID) and just note in your final message any stack whose milestone is missing or appears in more than one Project. Skip quietly if it is fine."
 
   printf '%s' "$p"
 }
@@ -1074,7 +1169,14 @@ run_repo() {
 ' ' ')"
     fi
 
-    local base_branch; base_branch="$(resolve_base_branch "$repo_path" "$stack" "$branch" stack_branch)"
+    STACK_NOTES_ALL="" STACK_NOTES_REF=""
+    if [[ "$stack" != "solo" ]] && ! stack_notes_load "$repo_path" "$stack"; then
+      echo "warn: can't read stack '$stack' notes from the tracker, skipping task #$num rather than risk a duplicate notes object"
+      skipped_summary="$skipped_summary
+- #$num: not attempted, couldn't read stack '$stack' notes from the tracker"
+      continue
+    fi
+    local base_branch; base_branch="$(resolve_base_branch "$repo_path" "$stack" "$branch" stack_branch "$STACK_NOTES_ALL")"
     # The previous task leaves the repo on its own branch; the prompt says the
     # base is "currently checked out", so make that true.
     if ! git -C "$repo_path" checkout --quiet "$base_branch"; then
@@ -1083,16 +1185,17 @@ run_repo() {
 - #$num: not attempted, couldn't check out its base branch '$base_branch'"
       continue
     fi
+    # Local notes live on the stack's branches, so re-read them now that the
+    # base branch is checked out; tracker notes don't depend on the checkout.
+    [[ "$stack" != "solo" && "$TASK_SOURCE" == local ]] && stack_notes_load "$repo_path" "$stack"
     local stack_notes=""
-    if [[ "$stack" != "solo" && -f "$repo_path/docs/stack-notes/$stack.md" ]]; then
-      stack_notes="$(extract_latest_stack_note "$repo_path/docs/stack-notes/$stack.md")"
-    fi
+    [[ -n "$STACK_NOTES_ALL" ]] && stack_notes="$(extract_latest_stack_note <<< "$STACK_NOTES_ALL")"
 
     local task_title
     task_title="$(sed -n '1p' "$blockfile" | sed -E 's/^- \[ \] #[0-9]+ (\[stack: [^]]+\] )?\*\*(.*)\*\*.*$/\2/')"
 
     local task_prompt
-    task_prompt="$(build_task_prompt "$(cat "$blockfile")" "$num" "$stack" "$base_branch" "$stack_notes" "$(printf '%02d' $((attempted+1)))" "$run_num" "$retried")"
+    task_prompt="$(build_task_prompt "$(cat "$blockfile")" "$num" "$stack" "$base_branch" "$stack_notes" "$(printf '%02d' $((attempted+1)))" "$run_num" "$retried" "$STACK_NOTES_REF")"
 
     # Same r<R>-<PP>-t<NN> as the branch name told to the subprocess, plus a
     # slug derived from the task title.
@@ -1171,7 +1274,14 @@ $task_result"
     return 0
   fi
 
-  local housekeeping_prompt; housekeeping_prompt="$(build_housekeeping_prompt "$run_summary" "$skipped_summary" "$run_num" "$ran_keep_args")"
+  # Remote modes: snapshot every stack's tracker notes for the sweep (task
+  # sessions are done, so nothing changes under it).
+  local notes_dir=""
+  if [[ "$TASK_SOURCE" != local ]]; then
+    notes_dir="$(mktemp -d)"
+    ts_stack_notes_export "$repo_path" "$notes_dir" || echo "warn: couldn't export tracker stack notes, the sweep will see none"
+  fi
+  local housekeeping_prompt; housekeeping_prompt="$(build_housekeeping_prompt "$run_summary" "$skipped_summary" "$run_num" "$ran_keep_args" "$notes_dir")"
   echo "--- dispatching housekeeping ---"
   local hk_base="$logdir/r$run_num-housekeeping"
   local errlog="$hk_base.stderr.log"
@@ -1180,6 +1290,7 @@ $task_result"
   update_stats "$name" "$DISPATCH_TMP_RAW"
   accumulate_session
   rm -f "$DISPATCH_TMP_RAW"
+  [[ -z "$notes_dir" ]] || rm -rf "$notes_dir"
 
   local tasks_json; tasks_json="$(printf '%s\n' "${session_task_entries[@]}" | jq -s '.')"
   record_session_totals "$name" "$session_calls" "$session_cost" "$session_duration" "$session_turns" "$session_cache_read" "$session_cache_creation" "$session_input" "$session_output" "$tasks_json"
