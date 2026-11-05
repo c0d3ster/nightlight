@@ -14,7 +14,8 @@ source lib/env.sh
 # a tracker group for the stack exists and is open; ts_close_group <repo>
 # <stack> closes it. Both skip `solo`, are idempotent, and warn instead of
 # failing, since the nl:stack label stays authoritative. GitHub maps a stack to
-# a milestone; local and linear are no-op stubs.
+# a milestone; local and linear are no-op stubs (Linear milestones are
+# managed through the MCP tools in the prompts, see CLAUDE.md).
 load_task_source() {
   local repo_path="$1" meta="$1/docs/nightlight-meta.json"
   TASK_SOURCE=local TS_GITHUB_REPO="" TS_LINEAR_TEAM_ID="" TS_LABELS_JSON="{}"

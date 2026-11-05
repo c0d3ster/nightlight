@@ -15,3 +15,17 @@ Branch: overnight/2026-11-04/r1-01-tNITE-6-github-milestones
 ### Deviations
 - Needs the `Bash(gh api repos/*/milestones*)` allow entry in `.claude/settings.json`; not added by this task (tasks must not edit settings). See PR description.
 - Token check: `gh api repos/<repo> --jq .permissions` shows push/admin on c0d3ster/nightlight, so milestone writes should work. No live create was performed.
+
+## NITE-7 Map each non-solo stack to a Linear project milestone
+
+Branch: overnight/2026-11-05/r1-01-tNITE-7-linear-milestones
+
+### Decisions
+- Live MCP schemas checked: `save_milestone` takes only `project`, `id`/`name`, `description`, `targetDate`; there is no state, so a milestone cannot be completed or reopened by us. Linear derives it from the milestone's issues. So housekeeping is read-only (reports a missing or duplicate milestone) and `ts_close_group` stays a no-op.
+- `ts_ensure_group` / `ts_close_group` in `lib/task-source-linear.sh` remain `return 0` stubs (comment updated); all the work is MCP calls in prompts.
+- `/plan-tasks` Linear delta now has a Milestones bullet: lookup via `list_projects` + `includeMilestones`, ask/offer-create Project, proposal wording, `save_project`/`save_milestone`/`save_issue` after approval, warn+skip on none or duplicates.
+- Docs: CLAUDE.md Linear section, `docs/plans/multi-task-source.md` 2.6, housekeeping prompt (`build_housekeeping_prompt_linear`).
+
+### Deviations
+- `mcp__linear__save_project` must be added to the allow list in `.claude/settings.json` (tasks cannot edit settings). `save_milestone` was already allowed.
+- No live Project/milestone was created; nothing verified against a real workspace.

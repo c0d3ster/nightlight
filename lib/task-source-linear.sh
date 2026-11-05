@@ -174,7 +174,11 @@ ts_find_related() {
     | "\(if .state.type == "completed" or .state.type == "canceled" then "closed" else "open" end)\t\(.identifier)\t\(.title)"' <<< "$resp"
 }
 
-# Optional grouping hooks (docs/plans/multi-task-source.md 2.6): this source
-# has no milestone object, so both are no-ops. Callers need no declare -F guard.
+# Optional grouping hooks (docs/plans/multi-task-source.md 2.6). A Linear
+# milestone lives inside a Project and is created only by /plan-tasks through
+# the MCP tools (save_project, save_milestone, save_issue), so the shell side
+# has nothing to do: both stay no-ops, and callers need no declare -F guard.
+# save_milestone has no state parameter, so Linear derives a milestone's
+# completed or open status from its issues; there is nothing to close or reopen.
 ts_ensure_group() { return 0; }
 ts_close_group() { return 0; }
