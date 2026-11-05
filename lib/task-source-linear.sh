@@ -47,8 +47,10 @@ ts_linear_gql() {
 }
 
 # Fetches open (not completed/canceled) team issues carrying any section label
-# in one query, drops blocked and needs-human, sorts by creation time. No-op if
-# already cached this run.
+# in one query, drops blocked and needs-human, and orders them: creation time
+# within a stack, Linear priority between stacks and solo tasks (a stack takes
+# its best member's priority, unprioritized last, ties by creation time). No-op
+# if already cached this run.
 ts_linear_fetch() {
   [[ -n "$TS_LINEAR_CACHE" && -f "$TS_LINEAR_CACHE" ]] && return 0
   [[ -n "${LINEAR_API_KEY:-}" ]] || { echo "error: LINEAR_API_KEY is not set" >&2; return 1; }
@@ -69,7 +71,7 @@ ts_linear_fetch() {
     }) {
       pageInfo { hasNextPage endCursor }
       nodes {
-        identifier title description createdAt
+        identifier title description createdAt priority
         labels { nodes { name } }
         comments { nodes { body user { name } } }
       }
@@ -92,6 +94,17 @@ ts_linear_fetch() {
     map(select(([.labels.nodes[].name] | index($b) | not) and ([.labels.nodes[].name] | index($n) | not)))
     | map(. + {stack: ([.labels.nodes[].name | select(startswith($p)) | ltrimstr($p)] | first // null)})
     | sort_by(.createdAt)
+    # Resolve inherited stacks in creation order, before any regrouping.
+    | reduce .[] as $i ({prev: "solo", out: []};
+        ($i.stack // .prev) as $s | .prev = $s | .out += [$i + {stack: $s}])
+    | .out
+    # Priority orders whole groups, never tasks inside a stack: each non-solo
+    # stack is one group ranked by its best member, each solo task its own group.
+    # Linear priority is 1 urgent .. 4 low, 0 none; none ranks last.
+    | map(. + {gk: (if .stack == "solo" then "solo:" + .identifier else .stack end),
+               rank: (if (.priority // 0) == 0 then 5 else .priority end)})
+    | (group_by(.gk) | map({key: .[0].gk, value: {rank: (map(.rank) | min), first: (map(.createdAt) | min)}}) | from_entries) as $g
+    | sort_by([$g[.gk].rank, $g[.gk].first, .createdAt])
   ' "$raw" > "$TS_LINEAR_CACHE" || { rm -f "$raw" "$TS_LINEAR_CACHE"; TS_LINEAR_CACHE=""; return 1; }
   rm -f "$raw"
 }
@@ -105,8 +118,9 @@ ts_is_eligible() {
 
 # Writes one synthesized block file per issue under $2 (clearing anything
 # already there) and prints "<identifier>\t<effective-stack>\t<blockfile>"
-# lines in creation order. Effective stack is the nl:stack:* label, else the
-# previous task's stack (solo if none yet). Comments come from workspace users.
+# lines in dispatch order (see ts_linear_fetch). Effective stack is the
+# nl:stack:* label, else the previous task's stack in creation order (solo if
+# none yet). Comments come from workspace users.
 ts_list_tasks() {
   local outdir="$2"
   mkdir -p "$outdir"

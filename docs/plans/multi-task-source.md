@@ -307,9 +307,11 @@ exists, and bash can't call an MCP tool. So the split is forced:
 - **Listing** (`ts_is_eligible`, `ts_list_tasks`): `curl` + `jq` against
   `https://api.linear.app/graphql`, authenticated per 3.2. `id` is Linear's
   identifier (`ENG-142`); `blockfile` is synthesized from title, description,
-  and acceptance criteria. Order within a stack is issue creation time;
-  Linear's `priority` is a secondary signal only, since nothing forces it to
-  be set.
+  and acceptance criteria. Order within a stack is issue creation time, always.
+  Linear's `priority` orders whole groups: each non-solo stack is one group
+  ranked by its best member, each solo task its own group, ties by creation
+  time. Unset priority (0) ranks last, so with no priorities set the order is
+  plain creation time. Priority is never required at planning time.
 - **Every agentic action** (read issue detail and comments, transition
   labels and state, comment PR links, file `nl:discovered` issues) happens
   inside each `claude -p` subprocess via Linear's MCP server.
