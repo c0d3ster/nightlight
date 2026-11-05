@@ -158,3 +158,69 @@ ts_close_group() {
     || echo "warning: couldn't close milestone \"$stack\"; continuing (the label is authoritative)" >&2
   return 0
 }
+
+# ---- Stack notes held by the tracker (docs/plans/multi-task-source.md 2.7) ----
+# One tracking issue per non-solo stack, titled "stack-notes: <stack>" and
+# labelled nl:stack-notes (no section label, so it is never dispatched or
+# counted). Each task appends its entry as one comment. A finished stack's issue
+# is retitled "[done] stack-notes: <stack>" and stays open.
+
+# Writes <dir>/<stack>.md (every comment body, oldest first, blank-line
+# separated) and <dir>/<stack>.ref (one line naming the tracking issue) for each
+# stack-notes issue, or just stack $3 when given. Writes nothing for a stack
+# with no issue. Fails if gh does.
+ts_stack_notes_export() {
+  local repo_path="$1" dir="$2" only="${3:-}"
+  ts_gh_resolve_repo "$repo_path" || return 1
+  mkdir -p "$dir"
+  local raw
+  raw="$(gh issue list --repo "$TS_GITHUB_REPO" --state all --label "$(ts_gh_label stackNotes nl:stack-notes)" --limit 200 \
+    --json number,title,comments)" || return 1
+  local stack
+  while IFS= read -r stack; do
+    stack="${stack%$'\r'}"
+    [[ -n "$stack" ]] || continue
+    [[ -z "$only" || "$stack" == "$only" ]] || continue
+    jq -r --arg s "$stack" '
+      [.[] | select((.title | sub("^\[done\] "; "") | sub("^stack-notes: "; "")) == $s)] | first
+      | [.comments[]?.body] | join("\n\n")' <<< "$raw" | tr -d '\r' > "$dir/$stack.md"
+    jq -r --arg s "$stack" '
+      [.[] | select((.title | sub("^\[done\] "; "") | sub("^stack-notes: "; "")) == $s)] | first
+      | "issue #\(.number), currently titled \"\(.title)\""' <<< "$raw" > "$dir/$stack.ref"
+  done < <(jq -r '.[] | select(.title | test("^(\[done\] )?stack-notes: ")) | .title | sub("^\[done\] "; "") | sub("^stack-notes: "; "")' <<< "$raw")
+}
+
+# Prompt text telling a task session how to write its stack-notes entry.
+# $1 stack, $2 ref line from ts_stack_notes_export (empty: no issue yet).
+ts_stack_notes_write_instructions() {
+  local stack="$1" ref="${2:-}" label repo_flag=""
+  label="$(ts_gh_label stackNotes nl:stack-notes)"
+  [[ -n "$TS_GITHUB_REPO" ]] && repo_flag=" --repo $TS_GITHUB_REPO"
+  if [[ -z "$ref" ]]; then
+    printf '%s' "Stack notes live in the tracker, not in a file. No tracking issue exists for this stack yet: create it with \`gh issue create$repo_flag --title \"stack-notes: $stack\" --label $label --body \"Stack notes for $stack. One comment per task; do not edit.\"\` (create the label first with \`gh label create $label$repo_flag\` if the repo lacks it, and give the issue no other labels), then post your entry as a comment with \`gh issue comment <number>$repo_flag --body-file <file>\`."
+    return 0
+  fi
+  printf '%s' "Stack notes live in the tracker, not in a file: the tracking issue is $ref. Post your entry as ONE new comment with \`gh issue comment <number>$repo_flag --body-file <file>\` (never edit earlier comments). If its title starts with \"[done] \" (the stack was finished and is now resumed), also drop that prefix with \`gh issue edit <number>$repo_flag --title \"stack-notes: $stack\"\`."
+}
+
+# Counts for stats.sh: prints "<overnight> <manual> <blocked>". overnight =
+# closed issues labelled nl:overnight; manual = closed issues with a section
+# label but no nl:overnight; blocked = open issues labelled nl:blocked.
+ts_stats_counts() {
+  local repo_path="$1"
+  ts_gh_resolve_repo "$repo_path" || return 1
+  local overnight_label blocked_label
+  overnight_label="$(ts_gh_label overnight nl:overnight)"
+  blocked_label="$(ts_gh_label blocked nl:blocked)"
+  local closed="" label raw
+  for label in "$(ts_gh_label agentReady nl:agent-ready)" "$(ts_gh_label verify nl:verify)" "$(ts_gh_label research nl:research)" "$overnight_label"; do
+    raw="$(gh issue list --repo "$TS_GITHUB_REPO" --state closed --label "$label" --limit 10000 --json number,labels)" || return 1
+    closed="$closed$raw"
+  done
+  local blocked
+  blocked="$(gh issue list --repo "$TS_GITHUB_REPO" --state open --label "$blocked_label" --limit 10000 --json number --jq length)" || return 1
+  jq -rs --arg o "$overnight_label" --argjson b "$blocked" '
+    (add // []) | unique_by(.number) as $all
+    | ($all | map(select([.labels[].name] | index($o))) | length) as $ov
+    | "\($ov) \(($all | length) - $ov) \($b)"' <<< "$closed"
+}

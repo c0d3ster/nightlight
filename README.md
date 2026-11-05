@@ -12,7 +12,7 @@ This repo holds the runner and its config, nothing else. No dependencies, no das
 
 - `overnight.sh` dispatches one fresh `claude -p` subprocess per open task (plus one for end-of-run housekeeping) with `--add-dir <target-repo>`. Each task starts with no memory of the others, so cost stays bounded by one task's work.
 - Every subprocess launches from *this* repo, so its `CLAUDE.md` (workflow rules), `.claude/settings.json` (permission allowlist), and `.claude/skills/` apply no matter which repo was added. The target's own `CLAUDE.md` is never modified.
-- Stacked tasks (same `[stack: <name>]`, other than `solo`) share context through `docs/stack-notes/<stack>.md` in the target repo. Each task appends an entry, and a later task's prompt gets only the latest one. Housekeeping removes the file once the stack's PRs have all merged.
+- Stacked tasks (same `[stack: <name>]`, other than `solo`) share context through per-stack notes. Each task appends an entry, and a later task's prompt gets only the latest one. In local mode the notes are `docs/stack-notes/<stack>.md` in the target repo, removed by housekeeping once the stack's PRs have all merged. In GitHub and Linear mode they live in the tracker (a comment thread on a `stack-notes: <stack>` issue, or a Linear document of that title in the stack's project), and housekeeping retitles them `[done]` instead of deleting them. A leftover `docs/stack-notes` file is read as a fallback until the tracker has notes for that stack.
 - Each task ends with a `TASK_RESULT: #<n> status=... branch=... pr=...` line. Housekeeping receives these, confirms real state via `git`/`gh`, then opens the one PR that updates the task list, archive, and `docs/nightlight-meta.json`.
 - All work lands on `overnight/<date>/*` branches, one PR per task. `CLAUDE.md` has the full workflow rules.
 
@@ -171,7 +171,8 @@ Both modes use an explicit tool allowlist in `.claude/settings.json` (specific `
 ## What you get in the morning
 
 - One PR per task, targeting `main` or the previous branch in its stack.
-- One `chore: session housekeeping <date>` PR updating the task list, archive, and `docs/nightlight-meta.json`. It's the only PR that touches them.
+- Local mode: one `chore: session housekeeping <date>` PR updating the task list, archive, and `docs/nightlight-meta.json`. It's the only PR that touches them.
+- GitHub and Linear mode: housekeeping is tracker writes plus deleting merged stack branches, and opens no PR on a normal run. It adds `nl:overnight` to issues closed because their overnight PR merged, and `pnpm stats <repo>` counts from labels (overnight, manual, blocked). The only PR is when it removes a leftover legacy `docs/stack-notes` file.
 - Anything unfinished is annotated `NEEDS HUMAN: <steps>` or `blocked: <reason>` in the task list and the PR description.
 
 Merge stacks bottom-up. Merge solos and housekeeping whenever.

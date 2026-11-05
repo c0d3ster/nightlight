@@ -182,3 +182,106 @@ ts_find_related() {
 # completed or open status from its issues; there is nothing to close or reopen.
 ts_ensure_group() { return 0; }
 ts_close_group() { return 0; }
+
+# ---- Stack notes held by the tracker (docs/plans/multi-task-source.md 2.7) ----
+# One Linear document per non-solo stack, titled "stack-notes: <stack>", attached
+# to the stack's project (found through its milestone, see /plan-tasks) or, with
+# no project, to the team. Each task appends its entry with save_document's
+# atomic append patch. A finished stack's document is retitled
+# "[done] stack-notes: <stack>". Reads are GraphQL here; writes stay in the
+# claude -p subprocess (MCP).
+
+# Writes <dir>/<stack>.md (the document content) and <dir>/<stack>.ref (one line
+# naming the document) for each stack-notes document of this team, or just stack
+# $3 when given. Documents of other teams are ignored (matched through the
+# document's team or its project's teams). Fails on an API error.
+ts_stack_notes_export() {
+  local repo_path="$1" dir="$2" only="${3:-}"
+  [[ -n "${LINEAR_API_KEY:-}" ]] || { echo "error: LINEAR_API_KEY is not set" >&2; return 1; }
+  mkdir -p "$dir"
+  local needle="stack-notes: ${only}" resp
+  resp="$(ts_linear_gql 'query($q: String!) {
+    documents(first: 100, filter: {title: {containsIgnoreCase: $q}}) {
+      nodes { id title content team { key } project { teams { nodes { key } } } }
+    }
+  }' "$(jq -cn --arg q "$needle" '{q: $q}')")" || return 1
+  local team_key="$TS_LINEAR_TEAM_ID" stack
+  # Rows: stack, tab, base64 of the document JSON (content has newlines).
+  while IFS=$'\t' read -r stack row; do
+    stack="${stack%$'\r'}"
+    [[ -n "$stack" ]] || continue
+    [[ -z "$only" || "$stack" == "$only" ]] || continue
+    printf '%s' "$row" | base64 -d | jq -r '.content // ""' | tr -d '\r' > "$dir/$stack.md"
+    printf '%s' "$row" | base64 -d | jq -r '"document \(.id), currently titled \"\(.title)\""' > "$dir/$stack.ref"
+  done < <(jq -r --arg t "$team_key" '
+    .data.documents.nodes[]
+    | select(.title | test("^(\[done\] )?stack-notes: "))
+    | select((.team.key // empty) == $t or ([.project.teams.nodes[]?.key] | index($t)) != null or (.team == null and .project == null))
+    | "\(.title | sub("^\[done\] "; "") | sub("^stack-notes: "; ""))\t\(. | @json | @base64 | gsub("\n"; ""))"' <<< "$resp")
+}
+
+# Prompt text telling a task session how to write its stack-notes entry.
+# $1 stack, $2 ref line from ts_stack_notes_export (empty: no document yet).
+ts_stack_notes_write_instructions() {
+  local stack="$1" ref="${2:-}"
+  if [[ -z "$ref" ]]; then
+    printf '%s' "Stack notes live in the tracker, not in a file. No notes document exists for this stack yet: find the stack's Linear Project through its milestone (list_projects with includeMilestones, team $TS_LINEAR_TEAM_ID, the milestone named \"$stack\") and create the document with save_document (title \"stack-notes: $stack\", project <that project>, content your entry). If the stack has no Project or milestone, attach it to the team instead (team $TS_LINEAR_TEAM_ID), and never create a Project yourself."
+    return 0
+  fi
+  printf '%s' "Stack notes live in the tracker, not in a file: the notes are $ref. Add your entry with ONE save_document call on that id using patch [{op: \"append\", text: \"\n\n<your entry>\"}] (never resend or edit earlier content). If its title starts with \"[done] \" (the stack was finished and is now resumed), also pass title \"stack-notes: $stack\" in that same call."
+}
+
+# Counts for stats.sh: prints "<overnight> <manual> <blocked>". overnight =
+# completed issues labelled nl:overnight; manual = completed issues with a
+# section label but no nl:overnight; blocked = open issues labelled nl:blocked.
+# Pages through every result (100 per page).
+ts_stats_counts() {
+  [[ -n "${LINEAR_API_KEY:-}" ]] || { echo "error: LINEAR_API_KEY is not set" >&2; return 1; }
+  local team_type team_filter
+  IFS=$'\t' read -r team_type team_filter < <(ts_linear_team_filter)
+  local overnight_label blocked_label sections
+  overnight_label="$(ts_linear_label overnight nl:overnight)"
+  blocked_label="$(ts_linear_label blocked nl:blocked)"
+  sections="$(jq -cn --arg a "$(ts_linear_label agentReady nl:agent-ready)" \
+    --arg v "$(ts_linear_label verify nl:verify)" --arg r "$(ts_linear_label research nl:research)" --arg o "$overnight_label" '[$a, $v, $r, $o]')"
+  local query='query($team: '"$team_type"', $labels: [String!], $after: String, $state: StringComparator) {
+    issues(first: 100, after: $after, filter: {
+      team: '"$team_filter"',
+      state: {type: $state},
+      labels: {some: {name: {in: $labels}}}
+    }) {
+      pageInfo { hasNextPage endCursor }
+      nodes { identifier labels { nodes { name } } }
+    }
+  }'
+  local closed="" blocked=0 after resp
+  # Closed: completed-type issues, paged.
+  after=""
+  while :; do
+    resp="$(ts_linear_gql "$query" "$(jq -cn --arg t "$TS_LINEAR_TEAM_ID" --argjson l "$sections" --arg a "$after" \
+      '{team: $t, labels: $l, state: {eq: "completed"}} + (if $a == "" then {} else {after: $a} end)')")" || return 1
+    closed="$closed$(jq -c '.data.issues.nodes[]' <<< "$resp")"$'\n'
+    jq -e '.data.issues.pageInfo.hasNextPage' <<< "$resp" >/dev/null || break
+    after="$(jq -r '.data.issues.pageInfo.endCursor' <<< "$resp")"
+  done
+  # Blocked: not completed or canceled, labelled nl:blocked, paged.
+  local bquery='query($team: '"$team_type"', $label: String!, $after: String) {
+    issues(first: 100, after: $after, filter: {
+      team: '"$team_filter"',
+      state: {type: {nin: ["completed", "canceled"]}},
+      labels: {some: {name: {eq: $label}}}
+    }) { pageInfo { hasNextPage endCursor } nodes { identifier } }
+  }'
+  after=""
+  while :; do
+    resp="$(ts_linear_gql "$bquery" "$(jq -cn --arg t "$TS_LINEAR_TEAM_ID" --arg l "$blocked_label" --arg a "$after" \
+      '{team: $t, label: $l} + (if $a == "" then {} else {after: $a} end)')")" || return 1
+    blocked=$((blocked + $(jq '.data.issues.nodes | length' <<< "$resp")))
+    jq -e '.data.issues.pageInfo.hasNextPage' <<< "$resp" >/dev/null || break
+    after="$(jq -r '.data.issues.pageInfo.endCursor' <<< "$resp")"
+  done
+  jq -rs --arg o "$overnight_label" --argjson b "$blocked" '
+    unique_by(.identifier) as $all
+    | ($all | map(select([.labels.nodes[].name] | index($o))) | length) as $ov
+    | "\($ov) \(($all | length) - $ov) \($b)"' <<< "$closed"
+}

@@ -32,6 +32,30 @@
     }
   },
   "$defs": {
+    "taskCounts": {
+      "description": "The `tasks` object `pnpm stats <repo>` adds to a repo's totals (not stored in stats/<repo>.json). Remote sources (github, linear) count from the tracker: overnight = closed issues labelled nl:overnight, manual = closed issues with a section label (nl:agent-ready, nl:verify, nl:research) but no nl:overnight, blocked = open issues labelled nl:blocked (a live count). Local reads tasksCompleted/tasksBlocked from docs/nightlight-meta.json. Omitted when the repo dir or tracker is unreachable. Without a repo, `pnpm stats` sums these into one `tasks` object (local completed counts toward overnight) plus `repos_counted`.",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["source", "overnight", "manual", "blocked"],
+          "properties": {
+            "source": { "enum": ["github", "linear"] },
+            "overnight": { "type": "integer", "minimum": 0 },
+            "manual": { "type": "integer", "minimum": 0 },
+            "blocked": { "type": "integer", "minimum": 0 }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["source", "completed", "blocked"],
+          "properties": {
+            "source": { "const": "local" },
+            "completed": { "type": "integer", "minimum": 0 },
+            "blocked": { "type": "integer", "minimum": 0 }
+          }
+        }
+      ]
+    },
     "session": {
       "type": "object",
       "required": ["date", "calls", "cost_usd", "duration_s", "num_turns", "tasks"],
