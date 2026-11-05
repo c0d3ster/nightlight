@@ -854,7 +854,7 @@ validate_stats_shape() {
       check((.lastSession.cost_usd | type) == "number"; "lastSession.cost_usd missing or not a number"),
       check((.lastSession.tasks | type) == "array"; "lastSession.tasks missing or not an array"),
       (.lastSession.tasks // [] | to_entries[] | . as $e |
-        check(($e.value.taskNumber | type) == "number"; "lastSession.tasks[\($e.key)].taskNumber missing or not a number"),
+        check(($e.value.taskNumber | type) as $t | $t == "number" or $t == "string"; "lastSession.tasks[\($e.key)].taskNumber missing or not a number/string"),
         check(($e.value.taskTitle | type) == "string"; "lastSession.tasks[\($e.key)].taskTitle missing or not a string"),
         check(($e.value.status | type) == "string"; "lastSession.tasks[\($e.key)].status missing or not a string")
       )
@@ -1015,7 +1015,7 @@ run_repo() {
   record_task_entry() {
     local num="$1" title="$2" status="$3"
     session_task_entries+=("$(jq -nc \
-      --argjson num "$num" \
+      --arg num "$num" \
       --arg title "$title" \
       --arg status "$status" \
       --argjson cost "$US_COST" \
@@ -1025,7 +1025,7 @@ run_repo() {
       --argjson cache_creation "$US_CACHE_CREATION" \
       --argjson input "$US_INPUT" \
       --argjson output "$US_OUTPUT" \
-      '{taskNumber: $num, taskTitle: $title, status: $status, cost_usd: $cost, duration_s: $duration_s, num_turns: $turns, cache_read_tokens: $cache_read, cache_creation_tokens: $cache_creation, input_tokens: $input, output_tokens: $output}')")
+      '{taskNumber: (try ($num | tonumber) catch $num), taskTitle: $title, status: $status, cost_usd: $cost, duration_s: $duration_s, num_turns: $turns, cache_read_tokens: $cache_read, cache_creation_tokens: $cache_creation, input_tokens: $input, output_tokens: $output}')")
   }
 
   local rec num stack blockfile
