@@ -69,7 +69,7 @@
       "type": "object",
       "required": ["taskNumber", "taskTitle", "status", "cost_usd", "duration_s", "num_turns"],
       "properties": {
-        "taskNumber": { "type": "integer", "minimum": 1 },
+        "taskNumber": { "oneOf": [{ "type": "integer", "minimum": 1 }, { "type": "string", "minLength": 1 }] },
         "taskTitle": { "type": "string" },
         "status": {
           "enum": ["done", "blocked", "needs-human", "unknown", "dispatch-error"],

@@ -39,6 +39,7 @@
       "Bash(gh issue create:*)",
       "Bash(gh issue edit:*)",
       "Bash(gh issue close:*)",
+      "Bash(gh api repos/*/milestones*)",
       "Bash(gh label list:*)",
       "Bash(gh label create:*)",
       "Bash(gh pr view:*)",
