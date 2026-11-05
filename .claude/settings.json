@@ -61,6 +61,7 @@
       "mcp__linear__list_milestones",
       "mcp__linear__save_issue",
       "mcp__linear__save_comment",
+      "mcp__linear__save_milestone",
       "mcp__linear__create_issue_label"
     ],
     "deny": [
