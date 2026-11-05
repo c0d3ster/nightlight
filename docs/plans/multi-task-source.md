@@ -256,6 +256,20 @@ a failed `gh api` call. `/plan-tasks` ensures the milestone and sets it on
 each issue next to the stack label; housekeeping closes it when the stack is
 finished (same condition as the stack-notes sweep) and reopens it on resume.
 
+Linear has the same one-level contract, with a Project as the container
+(milestones only exist inside a Project; the team is the repo, a Project is a
+PRD). The shell functions stay no-op stubs: `/plan-tasks` does the work over
+MCP. It finds the stack's milestone by name through `list_projects` with
+`includeMilestones` (no stored map; the same name in two Projects warns and is
+skipped), asks which Project the stack belongs to or offers to create one,
+lists "will create Linear Project X and milestone Y" in the approval proposal,
+then after approval runs `save_project` / `save_milestone` and sets `project`
+and `milestone` on each issue through `save_issue`. A stack with no Project is
+skipped with a warning. `save_milestone` takes only `project`, `name`/`id`,
+`description` and `targetDate`: there is no state, so Linear derives
+completed/open from the milestone's issues. Housekeeping therefore only reads
+(and reports a missing or ambiguous milestone); it never creates or closes one.
+
 GitHub sub-issues and issue dependencies ("blocked by") exist, but the plan
 keeps stacks as `nl:stack:<name>` labels so the model matches TASKS.md and
 Linear one to one. Revisit only if stack labels prove clumsy.
