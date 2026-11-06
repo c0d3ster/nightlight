@@ -1,9 +1,10 @@
 {
   "nextTaskNumber": 36,
-  "tasksCompleted": 28,
-  "tasksBlocked": 1,
   "taskSource": "linear",
   "linear": {
-    "teamId": "NITE"
+    "teamId": "NITE",
+    "statuses": {
+      "queued": "Todo"
+    }
   }
 }
