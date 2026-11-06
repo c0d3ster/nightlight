@@ -10,7 +10,7 @@ A target repo is attached via --add-dir; args are `--labels` or `--no-labels` (`
 
 ## Steps
 
-1. Resolve the issue repo: `github.repo` from the repo's `docs/nightlight-meta.json` if set, else origin (`gh repo view --json nameWithOwner`). With `--labels`, load label names from the nightlight checkout: `source lib/task-source.sh`, set `TS_GITHUB_REPO`, and use `ts_gh_label` from `lib/task-source-github.sh` (source it directly; the meta file may not be `github` yet), honoring any `labels` overrides. Missing `nl:*` labels you are about to apply: `gh label create` them first.
+1. Resolve the issue repo: `github.repo` from the repo's `docs/nightlight-meta.json` if set, else origin (`gh repo view --json nameWithOwner`). With `--labels`, load label names from the nightlight checkout: `source lib/task-source.sh`, set `TS_GITHUB_REPO`, and use `ts_gh_label` from `lib/task-source-github.sh` (source it directly; the meta file may not be `github` yet), honoring any `labels` overrides. Before applying labels, run `bash lib/ensure-labels.sh <repo-path>` (creates any missing `nl:*` labels).
 2. `gh issue list --repo <repo> --state open --json number,title,labels,body,updatedAt`. Keep issues with no `nl:*` label, and exclude any issue the calling session just created.
 3. Gate before any scouting: show the count and each issue's number and title, then ask whether to review them: all, only the numbers I name, or skip. No answer means skip. Skip ends the session with nothing dispatched or changed.
 4. Fetch merged PRs once (`gh pr list --repo <repo> --state merged --limit 300 --json number,title,headRefName,mergedAt,body`) so each issue is matched without a `gh` call per issue.
