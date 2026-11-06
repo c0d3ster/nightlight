@@ -72,6 +72,7 @@ ts_linear_fetch() {
       pageInfo { hasNextPage endCursor }
       nodes {
         identifier title description createdAt priority
+        state { name }
         labels { nodes { name } }
         comments { nodes { body user { name } } }
       }
@@ -172,6 +173,87 @@ ts_find_related() {
   resp="$(ts_linear_gql "$gql" "$(jq -cn --arg t "$TS_LINEAR_TEAM_ID" --arg q "$query" '{team: $t, q: $q}')")" || return 1
   jq -r '.data.issues.nodes[]
     | "\(if .state.type == "completed" or .state.type == "canceled" then "closed" else "open" end)\t\(.identifier)\t\(.title)"' <<< "$resp"
+}
+
+# ---- Issue status (linear.statuses in nightlight-meta.json) ----
+# Four phases, each a status name or null (leave the issue alone): queued
+# (default null), started ("In Progress"), review ("In Review"), done ("Done").
+# queued and started are written here by the runner; review and done by the
+# housekeeping prompt. Dispatch never reads status beyond completed/canceled.
+
+TS_LINEAR_STATES_CACHE=""
+
+# Name configured for phase $1, empty when null or unset-with-null-default.
+ts_linear_status_for() {
+  local phase="$1" default='null'
+  case "$phase" in started) default='"In Progress"' ;; review) default='"In Review"' ;; done) default='"Done"' ;; esac
+  jq -r --arg k "$phase" --argjson d "$default" '(if has($k) then .[$k] else $d end) // empty' <<< "${TS_LINEAR_STATUSES_JSON:-{\}}"
+}
+
+# Prints the team's status id for name $1 (case-insensitive), nothing if the
+# team has none. The team's statuses are fetched once per run.
+ts_linear_state_id() {
+  local name="$1"
+  if [[ -z "$TS_LINEAR_STATES_CACHE" || ! -f "$TS_LINEAR_STATES_CACHE" ]]; then
+    local team_type team_filter resp
+    IFS=$'\t' read -r team_type team_filter < <(ts_linear_team_filter)
+    resp="$(ts_linear_gql 'query($team: '"$team_type"') {
+      workflowStates(first: 100, filter: {team: '"$team_filter"'}) { nodes { id name } }
+    }' "$(jq -cn --arg t "$TS_LINEAR_TEAM_ID" '{team: $t}')")" || return 1
+    TS_LINEAR_STATES_CACHE="$(mktemp)"
+    jq '.data.workflowStates.nodes' <<< "$resp" > "$TS_LINEAR_STATES_CACHE"
+  fi
+  jq -r --arg n "$name" 'map(select(.name | ascii_downcase == ($n | ascii_downcase))) | first.id // empty' "$TS_LINEAR_STATES_CACHE"
+}
+
+# Moves issue $1 to the status named $2. A status the team lacks warns and
+# skips (the MCP cannot create statuses); returns 1 on skip or failure.
+ts_linear_set_status() {
+  local id="$1" name="$2" state_id resp
+  state_id="$(ts_linear_state_id "$name")" || return 1
+  [[ -n "$state_id" ]] || { echo "warn: team $TS_LINEAR_TEAM_ID has no status named \"$name\", leaving $id as is" >&2; return 1; }
+  resp="$(ts_linear_gql 'mutation($id: String!, $s: String!) { issueUpdate(id: $id, input: {stateId: $s}) { success } }' \
+    "$(jq -cn --arg i "$id" --arg s "$state_id" '{id: $i, s: $s}')")" || return 1
+  jq -e '.data.issueUpdate.success' <<< "$resp" >/dev/null || { echo "warn: couldn't move $id to \"$name\"" >&2; return 1; }
+}
+
+# Moves issue $2 to phase $3's status (no-op when the phase is null or the
+# issue already has it) and records it in ledger file $1, a JSON object
+# {"<id>": {"original": <status before nightlight touched it>, "set": <status>}}.
+# An existing entry keeps its original, so a crashed run's issue is not
+# recorded as "In Progress" the next time around. Housekeeping restores
+# leftovers from the ledger. Status comes from the run's cached listing.
+ts_linear_move() {
+  local ledger="$1" id="$2" phase="$3" target cur
+  target="$(ts_linear_status_for "$phase")"
+  [[ -n "$target" ]] || return 0
+  cur="$(jq -r --arg i "$id" '.[] | select(.identifier == $i) | .state.name // empty' "$TS_LINEAR_CACHE")"
+  [[ -n "$cur" && "$cur" != "$target" ]] || return 0
+  ts_linear_set_status "$id" "$target" || return 0
+  mkdir -p "$(dirname "$ledger")"
+  [[ -s "$ledger" ]] || echo '{}' > "$ledger"
+  local tmp; tmp="$(mktemp)"
+  jq --arg i "$id" --arg o "$cur" --arg t "$target" '.[$i] = ((.[$i] // {original: $o}) + {set: $t})' "$ledger" > "$tmp" \
+    && mv "$tmp" "$ledger" || rm -f "$tmp"
+}
+
+# Drops ledger entries whose issue is no longer in a runner-set status
+# (queued, started or review names): housekeeping or a person already moved it.
+# An API error keeps the entry.
+ts_linear_ledger_prune() {
+  local ledger="$1" id cur
+  [[ -s "$ledger" ]] || return 0
+  local sets; sets="$(jq -cn --arg a "$(ts_linear_status_for queued)" --arg b "$(ts_linear_status_for started)" \
+    --arg c "$(ts_linear_status_for review)" '[$a, $b, $c] | map(select(. != ""))')"
+  while IFS= read -r id; do
+    id="${id%$'\r'}"
+    cur="$(ts_linear_gql 'query($id: String!) { issue(id: $id) { state { name } } }' "$(jq -cn --arg i "$id" '{id: $i}')" \
+      | jq -r '.data.issue.state.name // empty')" || continue
+    [[ -n "$cur" ]] || continue
+    jq -e --arg c "$cur" 'index($c)' <<< "$sets" >/dev/null && continue
+    local tmp; tmp="$(mktemp)"
+    jq --arg i "$id" 'del(.[$i])' "$ledger" > "$tmp" && mv "$tmp" "$ledger" || rm -f "$tmp"
+  done < <(jq -r 'keys[]' "$ledger")
 }
 
 # Optional grouping hooks (docs/plans/multi-task-source.md 2.6). A Linear
