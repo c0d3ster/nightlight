@@ -156,6 +156,11 @@ ts_task_result_re() {
 # "<state>\t#<n>\t<title>", state being open or closed.
 ts_find_related() {
   local repo_path="$1" query="$2"
+  # Defuse GitHub search syntax: quotes, qualifier colons, leading "-" negation.
+  # Keep "#" and "(" (migrate markers like "Migrated from TASKS.md #5 (").
+  query="$(printf '%s' "$query" | tr -d '"' | tr ':' ' ' | tr -s '[:space:]' ' ' \
+    | sed -E 's/(^| )-+/\1/g; s/^ +//; s/ +$//')"
+  [[ -z "$query" ]] && return 0
   ts_gh_resolve_repo "$repo_path" || return 1
   gh issue list --repo "$TS_GITHUB_REPO" --state all --search "$query" --limit 30 \
     --json number,title,state \
