@@ -333,8 +333,15 @@ next_run_number() {
   echo $((max+1))
 }
 
+# Branch-name token for a task id: local TASKS.md numbers use "t", issue ids
+# (GitHub and Linear) use "i", so a migrated repo's old local-task branches and
+# PRs (-t45-) can't collide with issue #45 (-i45-).
+task_branch_token() {
+  if [[ "$TASK_SOURCE" == local ]]; then echo t; else echo i; fi
+}
+
 # Finds interrupted attempts at task $2: local branches named
-# overnight/<date>/r<R>-<PP>-t<NN>-<slug> (NN = the task's own #<n>) that no
+# overnight/<date>/r<R>-<PP>-<t|i><NN>-<slug> (NN = the task's own id) that no
 # PR was ever opened for. A session that finished opens its PR before exiting,
 # so a branch with no PR means the session died mid-task (window closed,
 # machine slept) before housekeeping could say anything about it. A branch
@@ -344,7 +351,7 @@ next_run_number() {
 # work. Prints one orphaned branch name per line.
 find_orphan_branches() {
   local repo_path="$1" num="$2"
-  local re="^overnight/[0-9]{4}-[0-9]{2}-[0-9]{2}/r[0-9]+-[0-9]+-t$num-"
+  local re="^overnight/[0-9]{4}-[0-9]{2}-[0-9]{2}/r[0-9]+-[0-9]+-$(task_branch_token)$num-"
   local b pr_count
   while IFS= read -r b; do
     [[ "${b,,}" =~ ${re,,} ]] || continue
@@ -358,7 +365,10 @@ find_orphan_branches() {
 # dispatched again. Prints "<state> #<pr>" for $2's PR (open or merged ones win
 # over closed), nothing if it has none. The match is case-insensitive because a
 # session may lowercase a Linear identifier in its branch name. One gh call per
-# run, cached in TASK_PR_CACHE; returns 1 if gh can't answer.
+# run, cached in TASK_PR_CACHE; returns 1 if gh can't answer. Matches the
+# "-i<id>-" token; for one transition, an OPEN legacy "-t<id>-" PR (in flight
+# from before the rename) also counts. Merged or closed legacy -t PRs are
+# ignored: they belong to old local-task numbers that issues may reuse.
 TASK_PR_CACHE=""
 find_task_pr() {
   local repo_path="$1" num="$2"
@@ -366,8 +376,10 @@ find_task_pr() {
     TASK_PR_CACHE="$(cd "$repo_path" && gh pr list --state all --limit 500 --json number,state,headRefName 2>/dev/null)" \
       || { TASK_PR_CACHE=""; return 1; }
   fi
-  jq -r --arg re "^overnight/[0-9]{4}-[0-9]{2}-[0-9]{2}/r[0-9]+-[0-9]+-t$num-" '
-    [.[] | select(.headRefName | test($re; "i"))]
+  local pre="^overnight/[0-9]{4}-[0-9]{2}-[0-9]{2}/r[0-9]+-[0-9]+-"
+  jq -r --arg re "${pre}i$num-" --arg legacy "${pre}t$num-" '
+    [.[] | select((.headRefName | test($re; "i"))
+      or (.state == "OPEN" and (.headRefName | test($legacy; "i"))))]
     | (map(select(.state != "CLOSED")) + map(select(.state == "CLOSED"))) | first // empty
     | "\(.state | ascii_downcase) #\(.number)"' <<< "$TASK_PR_CACHE"
 }
@@ -541,7 +553,7 @@ Here is the task, verbatim from TASKS.md:
 
 $task_text
 
-This is run $run of today, dispatch position $position in it, so name your branch overnight/<YYYY-MM-DD>/r$run-$position-t$num-<task-slug> (position zero-padded to 2 digits, e.g. 01), per CLAUDE.md."
+This is run $run of today, dispatch position $position in it, so name your branch overnight/<YYYY-MM-DD>/r$run-$position-$(task_branch_token)$num-<task-slug> (position zero-padded to 2 digits, e.g. 01), per CLAUDE.md."
 
   if [[ "$stack" == "solo" ]]; then
     p="$p
