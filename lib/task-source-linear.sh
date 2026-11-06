@@ -112,9 +112,28 @@ ts_linear_fetch() {
 
 # Any open dispatchable work? Prints nothing; exit status is the answer. Also
 # primes the cache ts_list_tasks reads.
+# Open Discovered issues also count, so a repo holding only those still reaches
+# planning. They stay out of ts_linear_fetch's cache: ts_list_tasks reads it,
+# and Discovered items must never be dispatched.
 ts_is_eligible() {
   ts_linear_fetch || return 1
-  jq -e 'length > 0' "$TS_LINEAR_CACHE" >/dev/null
+  jq -e 'length > 0' "$TS_LINEAR_CACHE" >/dev/null && return 0
+  [[ "$(ts_discovered_count "$1")" -gt 0 ]]
+}
+
+# Prints the number of open Discovered issues (0 on an API failure).
+ts_discovered_count() {
+  local team_type team_filter resp
+  IFS=$'	' read -r team_type team_filter < <(ts_linear_team_filter)
+  local gql='query($team: '"$team_type"', $label: String!) {
+    issues(first: 100, filter: {
+      team: '"$team_filter"',
+      state: {type: {nin: ["completed", "canceled"]}},
+      labels: {some: {name: {eq: $label}}}
+    }) { nodes { identifier } }
+  }'
+  resp="$(ts_linear_gql "$gql" "$(jq -cn --arg t "$TS_LINEAR_TEAM_ID" --arg l "$(ts_linear_label discovered nl:discovered)"     '{team: $t, label: $l}')" 2>/dev/null)" || { echo 0; return 0; }
+  jq -r '.data.issues.nodes | length' <<< "$resp"
 }
 
 # Writes one synthesized block file per issue under $2 (clearing anything
