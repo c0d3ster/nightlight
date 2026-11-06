@@ -1072,7 +1072,9 @@ run_repo() {
   fi
 
   [[ "$TASK_SOURCE" != local || -f "$tasks" ]] || { echo "skip: $name (no TASKS.md)"; return 0; }
-  ts_is_eligible "$repo_path" || { echo "skip: $name (no open tasks)"; return 0; }
+  local elig=0; ts_is_eligible "$repo_path" || elig=$?
+  [[ $elig -ne 1 ]] || { echo "skip: $name (no open tasks)"; return 0; }
+  [[ $elig -eq 0 ]] || { echo "error: $name: task source lookup failed (see above); skipping"; return 1; }
 
   acquire_lock "$repo_path" "$name" || return 1
   ACTIVE_REPO_PATH="$repo_path"
@@ -1358,7 +1360,10 @@ if [[ -n "$REPO" ]]; then
   run_repo "$TARGET"
 else
   [[ -z "$STOP_AFTER$STACK$EXTRA_INSTRUCTIONS$OVERRIDE_PROMPT" ]] || { echo "these run flags require a single target repo (--limit is the exception, it applies per repo)"; exit 1; }
+  repo_failures=0
   for d in "$PROJECT_REPOS_DIR"/*/; do
-    run_repo "${d%/}"
+    run_repo "${d%/}" || repo_failures=$((repo_failures+1))
   done
+  [[ $repo_failures -eq 0 ]] || echo "warn: $repo_failures repo(s) failed this run"
+  (exit $(( repo_failures > 0 )))
 fi; exit $?
