@@ -101,8 +101,13 @@ fork per source. The mapping from TASKS.md concepts:
 | `docs/tasks-archive/` | not used; the source's own closed-issue history is the archive |
 
 Labels are configurable via a `labels` block (keys `agentReady`, `verify`,
-`research`, `decision`, `discovered`, `blocked`, `needsHuman`, `stackPrefix`)
-but default to the names above. Known downside: labels aren't mutually
+`research`, `decision`, `discovered`, `blocked`, `needsHuman`, `stackPrefix`,
+`priorityHigh`, `priorityLow`) but default to the names above. GitHub only: `nl:priority:high` / `nl:priority:low` order dispatch between
+groups (a non-solo stack is one group ranked by its best member, each solo task
+its own group; high, then unlabeled, then low; ties by lowest issue number).
+Issue number order holds within a stack and for unlabeled issues. Linear uses
+its native priority. `gh` rejects unknown labels, so create them on first use
+(`gh label create nl:priority:high --repo <repo>`). Known downside: labels aren't mutually
 exclusive, so a partial write can leave contradictory labels. Housekeeping
 detects and flags that, never silently resolves it.
 
