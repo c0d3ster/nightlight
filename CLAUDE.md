@@ -74,6 +74,21 @@ Opt-in per target repo via `docs/nightlight-meta.json`; builds on GitHub mode, s
 - Every checkbox line gets `#<n>` right after it — e.g. `- [ ] #48 [stack: auth] Add rate limiting to login endpoint` — across every section, not just Agent-Ready. Assigned only by `/plan-tasks`, never during a work session.
 - Numbers come from `docs/nightlight-meta.json`'s `nextTaskNumber`, incrementing monotonically — never reused, never renumbered, even after a task is completed and archived. This is what lets a PR, commit, or `## Discovered` note reference a specific task unambiguously forever.
 
+### Database changes
+
+Applies to any ORM or migration tool (Drizzle, Prisma, Alembic, Rails, etc.), whatever the target repo's stack.
+
+- When a task's acceptance criteria need a schema change, edit the schema/model file(s) only, then stop on the database side: no migration generation, no dev server, no codegen, no applying anything. Those steps cost many Bash round-trips and a human reviews them anyway.
+- Still do the non-DB parts of the task, and run the quality gates as usual. If code depends on generated output that doesn't exist yet, say so in the note rather than generating it.
+- Report `status=needs-human` (housekeeping sets `[/]`) and put a `NEEDS HUMAN:` block in the task PR description using the exact sequence below, filled in with the target repo's real commands (from its CLAUDE.md/package scripts):
+  1. Generate the migration (e.g. `pnpm drizzle-kit generate`, `npx prisma migrate dev --create-only`, `alembic revision --autogenerate -m "<msg>"`).
+  2. Review the generated SQL; fix or regenerate if it's wrong or destructive.
+  3. Start the dev server, then run codegen (e.g. `pnpm dev`, then `pnpm codegen`); skip if the repo has no codegen.
+  4. Review the generated types/client diff.
+  5. Apply the migration (e.g. `pnpm drizzle-kit migrate`, `npx prisma migrate deploy`, `alembic upgrade head`).
+  6. Commit the migration and generated files to the task branch, re-run the full test suite, then merge the PR.
+- Name the schema files changed and what to expect from the migration (new/altered tables or columns) so the human can sanity-check the generated SQL.
+
 ### Quality gates
 
 - Lint runs via the target repo's pre-commit hooks — never bypass (no --no-verify); fix the code, not the hook.
