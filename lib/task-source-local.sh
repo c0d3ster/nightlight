@@ -12,6 +12,11 @@ ts_is_eligible() {
   grep -Eq '^\s*- \[ \]' "$repo_path/TASKS.md"
 }
 
+# Prints the number of open items under TASKS.md's "## Discovered" heading.
+ts_discovered_count() {
+  awk '/^## /{d = ($0 ~ /^## Discovered/)} d && /^\s*- \[ \]/{n++} END{print n+0}' "$1/TASKS.md"
+}
+
 # Splits $1 (repo path)'s TASKS.md Agent-Ready/Verify/Research task blocks into one file
 # per task under $2 (clearing anything already there), and prints one line per
 # task to stdout: "<number>\t<effective-stack>\t<blockfile>", in file order.
