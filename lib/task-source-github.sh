@@ -16,6 +16,32 @@ ts_gh_label() {
   jq -r --arg k "$key" --arg d "$default" '.[$k] // $d' <<< "${TS_LABELS_JSON:-{\}}"
 }
 
+# Creates the nl:* labels the repo lacks (gh rejects labels that don't exist):
+# the canonical set from the labels config (sections, blocked, needs-human,
+# overnight, discovered, stack-notes) plus any extra names in $2... (e.g.
+# nl:stack:<name>, nl:decision, nl:priority:high). Idempotent: lists once, creates
+# only the missing names, tolerates "already exists". Prints "created <name>".
+ts_gh_ensure_labels() {
+  local repo_path="$1"; shift
+  ts_gh_resolve_repo "$repo_path" || return 1
+  local have err name rc=0
+  have="$(gh label list --repo "$TS_GITHUB_REPO" --limit 1000 --json name --jq '.[].name' 2>&1)" \
+    || { ts_gh_explain "gh label list failed" "$have"; return 1; }
+  for name in "$(ts_gh_label agentReady nl:agent-ready)" "$(ts_gh_label verify nl:verify)" "$(ts_gh_label research nl:research)" \
+    "$(ts_gh_label blocked nl:blocked)" "$(ts_gh_label needsHuman nl:needs-human)" "$(ts_gh_label overnight nl:overnight)" \
+    "$(ts_gh_label discovered nl:discovered)" "$(ts_gh_label stackNotes nl:stack-notes)" "$@"; do
+    [[ -n "$name" ]] || continue
+    grep -qixF -- "$name" <<< "$have" && continue
+    have="$have"$'\n'"$name"
+    if err="$(gh label create "$name" --repo "$TS_GITHUB_REPO" 2>&1)"; then
+      echo "created $name"
+    elif ! grep -qi 'already exists' <<< "$err"; then
+      ts_gh_explain "gh label create $name failed" "$err"; rc=1
+    fi
+  done
+  return $rc
+}
+
 # Prints a one-line error naming the repo and classifying gh's stderr ($2) as
 # an auth, repo or network failure, followed by gh's own message.
 ts_gh_explain() {
@@ -251,7 +277,7 @@ ts_stack_notes_write_instructions() {
   label="$(ts_gh_label stackNotes nl:stack-notes)"
   [[ -n "$TS_GITHUB_REPO" ]] && repo_flag=" --repo $TS_GITHUB_REPO"
   if [[ -z "$ref" ]]; then
-    printf '%s' "Stack notes live in the tracker, not in a file. No tracking issue exists for this stack yet: create it with \`gh issue create$repo_flag --title \"stack-notes: $stack\" --label $label --body \"Stack notes for $stack. One comment per task; do not edit.\"\` (create the label first with \`gh label create $label$repo_flag\` if the repo lacks it, and give the issue no other labels), then post your entry as a comment with \`gh issue comment <number>$repo_flag --body-file <file>\`."
+    printf '%s' "Stack notes live in the tracker, not in a file. No tracking issue exists for this stack yet: create it with \`gh issue create$repo_flag --title \"stack-notes: $stack\" --label $label --body \"Stack notes for $stack. One comment per task; do not edit.\"\` (the label already exists; give the issue no other labels), then post your entry as a comment with \`gh issue comment <number>$repo_flag --body-file <file>\`."
     return 0
   fi
   printf '%s' "Stack notes live in the tracker, not in a file: the tracking issue is $ref. Post your entry as ONE new comment with \`gh issue comment <number>$repo_flag --body-file <file>\` (never edit earlier comments). If its title starts with \"[done] \" (the stack was finished and is now resumed), also drop that prefix with \`gh issue edit <number>$repo_flag --title \"stack-notes: $stack\"\`."
