@@ -179,7 +179,9 @@ Merge stacks bottom-up. Merge solos and housekeeping whenever.
 
 ## Safety model
 
-No `--dangerously-skip-permissions`. `.claude/settings.json` is an explicit allowlist (test/lint/build, safe git, PR creation) plus a denylist (push or merge to `main`, `rm -rf`, `.env` reads, `--no-verify`). The agent can't merge its own work. If a task needs judgment or credentials it lacks, it stops and annotates.
+No `--dangerously-skip-permissions`. `.claude/settings.json` is an explicit allowlist (test/lint/build, safe git, PR creation) plus a denylist. The denylist blocks pushes naming `main` or `master` in any form (`origin main`, `HEAD:main`, `HEAD:refs/heads/main`, `+main`), force pushes, `git merge`, `--no-verify` and `-n` on commit, `git -c` and other option injection through `git -C`, `rm -rf`, and `.env` reads. Each rule was checked in a scratch repo with headless `claude -p`. The agent can't merge its own work, and a task session is told never to edit `.claude/settings.json`, so permission changes always come from you. If a task needs judgment or credentials it lacks, it stops and annotates.
+
+Known limits of the denylist. It matches command text, not intent, so it is a guardrail rather than a sandbox. Combined short flags such as `git commit -anm msg` are not caught, and neither are `git push --mirror` or `--all`. Because the rules are text matches, a commit message containing ` -c ` or ` -n` is also denied. Server-side protection (a branch protection rule on `main`) is the backstop that actually enforces "never push to main", so turn it on for any repo you point this at.
 
 **One narrow exception:** `/discover-tasks` and `/plan-tasks` Finalize merge their own PR (`gh pr merge --rebase --delete-branch`). Everything in it was already approved by you in that session, so the merge just completes it. The allowlist only permits `gh pr merge` on `chore/tasks-discover-*` and `chore/tasks-plan-*` branches, which never touch application code, and raw `git merge` stays denied everywhere. Overnight task and housekeeping PRs always wait for you.
 
