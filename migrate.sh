@@ -31,4 +31,9 @@ done
 [[ -d "$REPO" ]] || REPO="$PROJECT_REPOS_DIR/$REPO"
 REPO="$(cd "$REPO" && pwd -W)"
 
+if [[ "$TO" == "linear" ]]; then
+  TEAM="$(jq -r '.linear.teamId // empty' "$REPO/docs/nightlight-meta.json" 2>/dev/null || true)"
+  echo "warn: Linear team ${TEAM:-<chosen in session>} must be dedicated to this repo; dedupe matches any issue on the team." >&2
+fi
+
 MSYS_NO_PATHCONV=1 claude "/migrate-tasks --to $TO" --add-dir "$REPO"
