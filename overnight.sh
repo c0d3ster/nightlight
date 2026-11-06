@@ -699,13 +699,13 @@ Treat the TASK_RESULT lines above as a starting point, not ground truth -- a tas
 - Reported done with pr=none (a Verify task that found the work already exists): gh issue close <n> --reason completed with the note as the comment.
 - Reported blocked (no PR): add the $blocked label and comment the reason from the note.
 - Reported needs-human: add the $needs_human label and comment the exact steps (from the task PR description), then leave it open.
-Never close an issue whose PR has not merged, and never use a closing keyword to do it. gh rejects labels that don't exist, so before adding $blocked or $needs_human, create it if the repo lacks it (gh label create <name>$repo_flag).
+Never close an issue whose PR has not merged, and never use a closing keyword to do it. The runner already created the nl:* labels, so don't create labels.
 
 Also sweep every other open issue labeled $agent_ready, $verify or $research (this includes any also labeled $needs_human), not just ones reported this run: an earlier run's task PR may have merged since, and nothing else closes the issue. Task branches are named overnight/<date>/r<R>-<PP>-t<n>-<slug>, so find an issue's PR with gh pr list --state all --json number,state,headRefName,mergedAt$repo_flag and match -t<n>- in headRefName. If that PR merged, close the issue as completed with a PR-link comment, add the $overnight_label label and remove any status labels. If it is still open, or there is no PR, leave the issue alone.
 
 Also flag, never silently resolve, any open issue carrying contradictory labels (e.g. $blocked together with $needs_human, or more than one section label): comment on the issue describing the conflict and mention it in your final message, but change no labels.
 
-Counters: whenever you close an issue because its overnight/* task PR merged (the per-task PR-merged case and the sweep above, not the pr=none case), also add the $overnight_label label in the same step (gh issue edit <n> --add-label $overnight_label$repo_flag; create the label first with gh label create $overnight_label$repo_flag if the repo lacks it). stats.sh counts completions from that label, so do NOT touch docs/nightlight-meta.json or write any counter.
+Counters: whenever you close an issue because its overnight/* task PR merged (the per-task PR-merged case and the sweep above, not the pr=none case), also add the $overnight_label label in the same step (gh issue edit <n> --add-label $overnight_label$repo_flag). stats.sh counts completions from that label, so do NOT touch docs/nightlight-meta.json or write any counter.
 
 Stack notes live in the tracker, one tracking issue per stack titled \"stack-notes: <stack>\" (label $stack_notes_label), not in a file. After all the closes above, run the stack-notes sweep, one deterministic script: bash lib/stack-notes.sh <target-repo-path> --remote ${notes_dir:-<notes-dir>}$keep_args (run it from this repo, nightlight; the target repo is the --add-dir), adding one more --keep <name> for every stack that still has an open issue labeled nl:stack:<name>. It deletes merged stack branches locally and on origin and prints \"finished <stack>\" for each finished stack. For each finished stack, retitle its tracking issue: find it with gh issue list --label $stack_notes_label --state all --json number,title$repo_flag and run gh issue edit <number> --title \"[done] stack-notes: <stack>\"$repo_flag (skip one already prefixed [done]). Do not re-implement or second-guess the sweep's checks; report what it prints in your final message.
 
@@ -1080,6 +1080,8 @@ run_repo() {
   ACTIVE_REPO_PATH="$repo_path"
 
   echo "=== $name ==="
+  # gh rejects labels that don't exist: create the nl:* set once so no prompt has to.
+  [[ "$TASK_SOURCE" != github ]] || ts_gh_ensure_labels "$repo_path" || echo "warn: couldn't ensure nl:* labels; label writes may fail"
   local branch; branch="$(default_branch "$repo_path")" || { end_repo; return 1; }
   git -C "$repo_path" checkout "$branch" && git -C "$repo_path" pull
 
