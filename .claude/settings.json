@@ -62,6 +62,10 @@
       "mcp__linear__save_issue",
       "mcp__linear__save_comment",
       "mcp__linear__save_milestone",
+      "mcp__linear__save_project",
+      "mcp__linear__get_document",
+      "mcp__linear__list_documents",
+      "mcp__linear__save_document",
       "mcp__linear__create_issue_label"
     ],
     "deny": [
