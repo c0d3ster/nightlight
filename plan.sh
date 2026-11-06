@@ -34,14 +34,20 @@ else
   # run_repo uses. Computed here in plain bash, before claude ever launches,
   # so repos without qualifying work are never attached at all.
   ADD_DIRS=()
+  ERRORED=0
   for d in "$PROJECT_REPOS_DIR"/*/; do
     d="${d%/}"
     name="$(basename "$d")"
     load_task_source "$d" || { echo "skip: $name (task source unavailable)"; continue; }
     [[ "$TASK_SOURCE" != local || -f "$d/TASKS.md" ]] || { echo "skip: $name (no TASKS.md)"; continue; }
-    ts_is_eligible "$d" || { echo "skip: $name (no open tasks)"; continue; }
+    rc=0; ts_is_eligible "$d" || rc=$?
+    if [[ $rc -eq 1 ]]; then echo "skip: $name (no open tasks)"; continue; fi
+    if [[ $rc -ne 0 ]]; then echo "skip: $name (task source error, see above)"; ERRORED=$((ERRORED+1)); continue; fi
     ADD_DIRS+=(--add-dir "$(cd "$d" && pwd -W)")
   done
-  [[ ${#ADD_DIRS[@]} -gt 0 ]] || { echo "no repos under PROJECT_REPOS_DIR have open tasks"; exit 0; }
+  if [[ ${#ADD_DIRS[@]} -eq 0 ]]; then
+    [[ $ERRORED -eq 0 ]] || { echo "error: task source failed for $ERRORED repo(s); no repos could be checked"; exit 1; }
+    echo "no repos under PROJECT_REPOS_DIR have open tasks"; exit 0
+  fi
   MSYS_NO_PATHCONV=1 claude "/plan-tasks" "${ADD_DIRS[@]}"
 fi

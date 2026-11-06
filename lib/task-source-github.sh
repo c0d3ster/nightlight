@@ -16,12 +16,31 @@ ts_gh_label() {
   jq -r --arg k "$key" --arg d "$default" '.[$k] // $d' <<< "${TS_LABELS_JSON:-{\}}"
 }
 
+# Prints a one-line error naming the repo and classifying gh's stderr ($2) as
+# an auth, repo or network failure, followed by gh's own message.
+ts_gh_explain() {
+  local what="$1" err="$2" kind="gh failed"
+  if grep -qiE 'gh auth login|not logged in|authentication|bad credentials|HTTP 401|GH_TOKEN' <<< "$err"; then
+    kind="authentication failed (run gh auth login or set GH_TOKEN)"
+  elif grep -qiE 'could not resolve host|no such host|dial tcp|timed out|timeout|connection (refused|reset)|network is unreachable|error connecting' <<< "$err"; then
+    kind="network error"
+  elif grep -qiE 'could not resolve to a repository|HTTP 404|not found' <<< "$err"; then
+    kind="repo not found or no access (check github.repo in docs/nightlight-meta.json)"
+  fi
+  echo "error: GitHub ${TS_GITHUB_REPO:-<unresolved repo>}: $what: $kind: ${err//$'
+'/ }" >&2
+}
+
 # Sets TS_GITHUB_REPO to github.repo, else the target repo's origin.
 ts_gh_resolve_repo() {
   [[ -n "$TS_GITHUB_REPO" ]] && return 0
-  TS_GITHUB_REPO="$(cd "$1" && gh repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null)" \
-    && [[ -n "$TS_GITHUB_REPO" ]] \
-    || { echo "error: can't resolve the GitHub repo from origin; set github.repo in docs/nightlight-meta.json" >&2; return 1; }
+  local out err; err="$(mktemp)"
+  if out="$(cd "$1" && gh repo view --json nameWithOwner --jq .nameWithOwner 2>"$err")" && [[ -n "$out" ]]; then
+    TS_GITHUB_REPO="$out"; rm -f "$err"; return 0
+  fi
+  ts_gh_explain "can't resolve the repo from origin (or set github.repo in docs/nightlight-meta.json)" "$(cat "$err")"
+  rm -f "$err"
+  return 1
 }
 
 # Fetches open issues for each section label once, merges, drops blocked and
@@ -55,21 +74,26 @@ ts_gh_fetch() {
   rm -f "$raw"
 }
 
-# Any open dispatchable work? Prints nothing; exit status is the answer. Also
+# Any open dispatchable work? Prints nothing; exit status is the answer: 0
+# eligible, 1 nothing to do, 2 the lookup failed (error already on stderr). Also
 # primes the cache ts_list_tasks reads.
 # Open Discovered issues also count, so a repo holding only those still reaches
 # planning. They stay out of ts_gh_fetch's cache: ts_list_tasks reads it, and
 # Discovered items must never be dispatched.
 ts_is_eligible() {
-  ts_gh_fetch "$1" || return 1
+  ts_gh_fetch "$1" || return 2
   jq -e 'length > 0' "$TS_GH_CACHE" >/dev/null && return 0
-  [[ "$(ts_discovered_count "$1")" -gt 0 ]]
+  local n; n="$(ts_discovered_count "$1")" || return 2
+  [[ "$n" -gt 0 ]]
 }
 
-# Prints the number of open Discovered issues (0 on a gh failure).
+# Prints the number of open Discovered issues; on a gh failure prints 0, reports
+# the error on stderr and returns 1.
 ts_discovered_count() {
-  ts_gh_resolve_repo "$1" || { echo 0; return 0; }
-  gh issue list --repo "$TS_GITHUB_REPO" --state open --label "$(ts_gh_label discovered nl:discovered)"     --limit 200 --json number --jq length 2>/dev/null || echo 0
+  local out
+  ts_gh_resolve_repo "$1" || { echo 0; return 1; }
+  out="$(gh issue list --repo "$TS_GITHUB_REPO" --state open --label "$(ts_gh_label discovered nl:discovered)" --limit 200 --json number --jq length 2>&1)"     || { ts_gh_explain "gh issue list failed for the discovered label" "$out"; echo 0; return 1; }
+  echo "$out"
 }
 
 # Writes one synthesized block file per issue under $2 (clearing anything
