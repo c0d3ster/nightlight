@@ -216,7 +216,7 @@ ts_stack_notes_export() {
   done < <(jq -r --arg t "$team_key" '
     .data.documents.nodes[]
     | select(.title | test("^(\[done\] )?stack-notes: "))
-    | select((.team.key // empty) == $t or ([.project.teams.nodes[]?.key] | index($t)) != null or (.team == null and .project == null))
+    | select((.team.key // "") == $t or ([.project.teams.nodes[]?.key] | index($t)) != null or (.team == null and .project == null))
     | "\(.title | sub("^\[done\] "; "") | sub("^stack-notes: "; ""))\t\(. | @json | @base64 | gsub("\n"; ""))"' <<< "$resp")
 }
 
