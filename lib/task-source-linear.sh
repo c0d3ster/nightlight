@@ -110,18 +110,21 @@ ts_linear_fetch() {
   rm -f "$raw"
 }
 
-# Any open dispatchable work? Prints nothing; exit status is the answer. Also
+# Any open dispatchable work? Prints nothing; exit status is the answer: 0
+# eligible, 1 nothing to do, 2 the lookup failed (error already on stderr). Also
 # primes the cache ts_list_tasks reads.
 # Open Discovered issues also count, so a repo holding only those still reaches
 # planning. They stay out of ts_linear_fetch's cache: ts_list_tasks reads it,
 # and Discovered items must never be dispatched.
 ts_is_eligible() {
-  ts_linear_fetch || return 1
+  ts_linear_fetch || return 2
   jq -e 'length > 0' "$TS_LINEAR_CACHE" >/dev/null && return 0
-  [[ "$(ts_discovered_count "$1")" -gt 0 ]]
+  local n; n="$(ts_discovered_count "$1")" || return 2
+  [[ "$n" -gt 0 ]]
 }
 
-# Prints the number of open Discovered issues (0 on an API failure).
+# Prints the number of open Discovered issues; on an API failure prints 0,
+# reports the error on stderr and returns 1.
 ts_discovered_count() {
   local team_type team_filter resp
   IFS=$'	' read -r team_type team_filter < <(ts_linear_team_filter)
@@ -132,7 +135,7 @@ ts_discovered_count() {
       labels: {some: {name: {eq: $label}}}
     }) { nodes { identifier } }
   }'
-  resp="$(ts_linear_gql "$gql" "$(jq -cn --arg t "$TS_LINEAR_TEAM_ID" --arg l "$(ts_linear_label discovered nl:discovered)"     '{team: $t, label: $l}')" 2>/dev/null)" || { echo 0; return 0; }
+  resp="$(ts_linear_gql "$gql" "$(jq -cn --arg t "$TS_LINEAR_TEAM_ID" --arg l "$(ts_linear_label discovered nl:discovered)"     '{team: $t, label: $l}')")" || { echo 0; return 1; }
   jq -r '.data.issues.nodes | length' <<< "$resp"
 }
 

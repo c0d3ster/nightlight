@@ -47,7 +47,9 @@ Extract `lib/task-source-<name>.sh`, sourced by `run_repo()` based on
 `taskSource`. Every module implements the same contract:
 
 - `ts_is_eligible(repo_path)`: any open dispatchable work? Queried once;
-  the same result feeds the loop (no double API hit).
+  the same result feeds the loop (no double API hit). Exit 0 eligible, 1
+  nothing to do (quiet skip), 2 lookup failed (error on stderr naming the
+  repo; callers report it and count the repo as failed, never "no open tasks").
 - `ts_list_tasks(repo_path, outdir)`: emits today's tab-separated
   `id\tstack\tblockfile` shape. `blockfile` is a synthesized task body
   (title, description, acceptance criteria) so `build_task_prompt` never

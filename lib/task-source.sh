@@ -9,6 +9,10 @@ source lib/env.sh
 # modules to read. Only the chosen source's block is read.
 # github.repo is optional (the github module falls back to origin).
 #
+# ts_is_eligible <repo> exits 0 (eligible), 1 (nothing to do, quiet skip) or 2
+# (lookup failed: error on stderr naming the repo; callers must not report it
+# as "no open tasks").
+#
 # Optional grouping contract (every module defines both, so callers need no
 # `declare -F` guard): ts_ensure_group <repo> <stack> <description> makes sure
 # a tracker group for the stack exists and is open; ts_close_group <repo>
