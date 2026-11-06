@@ -150,9 +150,14 @@ An open issue with a section label is a task, and the issue number is the task i
 ```json
 {
   "taskSource": "linear",
-  "linear": { "teamId": "ENG" }
+  "linear": {
+    "teamId": "ENG",
+    "statuses": { "queued": "Todo", "started": "In Progress", "review": "In Review", "done": "Done" }
+  }
 }
 ```
+
+`linear.statuses` is optional and moves issue status along with the work. Each phase is a status name, or `null` to leave the issue alone; the values above except `queued` are the defaults (`queued` defaults to `null`). The runner moves tonight's dispatch list to `queued` at run start and each task to `started` as it is dispatched; housekeeping moves it to `review` when its PR is open and `done` when it merges. The runner remembers each issue's original status in `logs/<repo>/status-ledger.json`, and housekeeping puts anything left behind (a crashed run, `--limit`, a blocked task, a PR closed unmerged) back to it. A status your team lacks is skipped with a warning. Dispatch ignores status, and `pnpm stats` still counts from labels.
 
 `linear.teamId` is a team key or UUID. Tasks are open issues on that team with a section label, with ids like `ENG-142` (so `--stop-after` is unavailable; `--limit` and `--stack` work). **Use one Linear team per repo, inside one workspace.** The module scopes only by team and `nl:*` labels, so two repos sharing a team would each dispatch the other's labeled issues, and `migrate --to linear` dedupe would match issues across repos. Do not share a team. A team per repo gives each repo its own issue prefix, statuses, cycles, and labels, and avoids a second API key or MCP sign-in (the MCP connects to one workspace at a time).
 

@@ -729,6 +729,16 @@ build_housekeeping_prompt_linear() {
   agent_ready="$(ts_linear_label agentReady nl:agent-ready)"
   verify="$(ts_linear_label verify nl:verify)"
   research="$(ts_linear_label research nl:research)"
+  local st_review st_done st_started st_queued status_rules
+  st_review="$(ts_linear_status_for review)"; st_done="$(ts_linear_status_for done)"
+  st_started="$(ts_linear_status_for started)"; st_queued="$(ts_linear_status_for queued)"
+  status_rules="Statuses: the team's statuses are configured, not assumed. Review status: ${st_review:-none (never write one)}. Done status: ${st_done:-none (never write one, merged issues keep their current status)}. Whenever this prompt says to move an issue to one of them, pass that exact name as save_issue's state, after list_issue_statuses shows the team has it; if the team lacks it, skip the status move, note it in your final message, and still do the label and comment parts. A status move never replaces the label and comment rules."
+  local status_restore=""
+  if [[ -n "$st_queued$st_started$st_review" && -n "${LINEAR_LEDGER:-}" ]]; then
+    status_restore="
+
+Status ledger: the runner moved issues to ${st_queued:+\"$st_queued\" (queued) }${st_started:+\"$st_started\" (started) }${st_review:+\"$st_review\" (review) }and recorded each one's original status in $LINEAR_LEDGER (a JSON object mapping issue id to {original, set}; read it with the Read tool, and skip this whole section if the file is missing or empty). Never edit that file, the runner prunes it. For every entry, get_issue it and confirm its current status name equals its \"set\" value (otherwise someone already moved it: leave it). Then check its task PR (match the id case-insensitively in headRefName, as in the sweep below): merged means the PR-merged rule applies (Done); open means it stays in ${st_review:-its current status}; no PR or a PR closed unmerged means restore it with save_issue to the entry's \"original\" status name (a crash, --limit or a blocked task left it behind), and say so in your final message. A restored issue keeps any $blocked or $needs_human label it was given this run."
+  fi
   local p="A target repo has been added to this session via --add-dir. This session runs ONLY the end-of-session housekeeping step from the \"Overnight Agent Workflow\" rules in CLAUDE.md (this repo, nightlight's own) -- this run just finished dispatching one fresh session per task, so you were not present for any of them. Do not attempt any task work yourself. This is run $run of today, so name the housekeeping branch overnight/<YYYY-MM-DD>/r$run-housekeeping.
 
 This repo's backlog is Linear issues (taskSource \"linear\", team $TS_LINEAR_TEAM_ID): the issues, not TASKS.md, are the task list. Do NOT create or edit TASKS.md or any docs/tasks-archive/ file, and skip the TASKS.md-specific maintenance rules in CLAUDE.md. Task ids below are Linear identifiers (e.g. ENG-142). Make every tracker change through the Linear MCP tools (mcp__linear__*: list_issues, get_issue, save_issue, save_comment, list_issue_labels, create_issue_label, list_issue_statuses, list_documents, save_document; load their schemas first), never gh issue. gh is only for PR and branch state.
@@ -746,18 +756,18 @@ $skipped_summary"
   p="$p
 
 Treat the TASK_RESULT lines above as a starting point, not ground truth -- a task session can misreport, so confirm each PR/branch's actual state with git/gh before changing any issue (e.g. gh pr view <pr> --json state,mergedAt, or gh pr list --head <branch> --state all). Then, per attempted task:
-- PR merged: save_issue to move it to the team's Done (completed-type) status, add the $overnight_label label (see Counters below) and drop any status labels ($blocked, $needs_human) that no longer apply, plus save_comment linking the PR. Labels set through save_issue replace the whole list, so read the issue's current labels first and resend the ones you keep. Wrap task ids in backticks in comments you write.
-- PR open, not merged: leave the issue's status alone; no label change unless it reported needs-human.
-- Reported done with pr=none (a Verify task that found the work already exists): move it to Done with the note as the comment.
+- PR merged: save_issue to move it to the Done status${st_done:+ (\"$st_done\")}, add the $overnight_label label (see Counters below) and drop any status labels ($blocked, $needs_human) that no longer apply, plus save_comment linking the PR. Labels set through save_issue replace the whole list, so read the issue's current labels first and resend the ones you keep. Wrap task ids in backticks in comments you write.
+- PR open, not merged: save_issue to move it to the review status (skip when none is configured or it is already there); no label change unless it reported needs-human.
+- Reported done with pr=none (a Verify task that found the work already exists): move it to the Done status with the note as the comment.
 - Reported blocked (no PR): add the $blocked label and save_comment the reason from the note.
 - Reported needs-human: add the $needs_human label and save_comment the exact steps (from the task PR description), then leave it open.
-Never move an issue to Done unless its PR merged (or it is the pr=none case above). Before adding $blocked or $needs_human, create it with create_issue_label if list_issue_labels shows the team lacks it.
+Never move an issue to Done unless its PR merged (or it is the pr=none case above). $status_rules$status_restore Before adding $blocked or $needs_human, create it with create_issue_label if list_issue_labels shows the team lacks it.
 
-Also sweep every other open issue labeled $agent_ready, $verify or $research (this includes any also labeled $needs_human), not just ones reported this run: an earlier run's task PR may have merged since, and nothing else moves the issue. Task branches are named overnight/<date>/r<R>-<PP>-t<id>-<slug>, so find an issue's PR with gh pr list --state all --json number,state,headRefName,mergedAt and match the id case-insensitively in headRefName. If that PR merged, move the issue to Done with a PR-link comment, add the $overnight_label label and remove any status labels. If it is still open, or there is no PR, leave the issue alone.
+Also sweep every other open issue labeled $agent_ready, $verify or $research (this includes any also labeled $needs_human), not just ones reported this run: an earlier run's task PR may have merged since, and nothing else moves the issue. Task branches are named overnight/<date>/r<R>-<PP>-t<id>-<slug>, so find an issue's PR with gh pr list --state all --json number,state,headRefName,mergedAt and match the id case-insensitively in headRefName. If that PR merged, move the issue to the Done status with a PR-link comment, add the $overnight_label label and remove any status labels. If it is still open, move it to the review status if it is not there yet. With no PR, leave the issue alone.
 
 Also flag, never silently resolve, any open issue carrying contradictory labels (e.g. $blocked together with $needs_human, or more than one section label): save_comment describing the conflict and mention it in your final message, but change no labels.
 
-Counters: whenever you move an issue to Done because its overnight/* task PR merged (the per-task PR-merged case and the sweep above, not the pr=none case), also add the $overnight_label label in the same save_issue call (create it with create_issue_label if list_issue_labels shows the team lacks it). stats.sh counts completions from that label, so do NOT touch docs/nightlight-meta.json or write any counter.
+Counters: whenever you move an issue to Done (or, with no Done status configured, close it out by this rule) because its overnight/* task PR merged (the per-task PR-merged case and the sweep above, not the pr=none case), also add the $overnight_label label in the same save_issue call (create it with create_issue_label if list_issue_labels shows the team lacks it). stats.sh counts completions from that label, so do NOT touch docs/nightlight-meta.json or write any counter.
 
 Stack notes live in the tracker, one Linear document per stack titled \"stack-notes: <stack>\" (in the stack's Project, or on the team when it has none), not in a file. After all the Done moves above, run the stack-notes sweep, one deterministic script: bash lib/stack-notes.sh <target-repo-path> --remote ${notes_dir:-<notes-dir>}$keep_args (run it from this repo, nightlight; the target repo is the --add-dir), adding one more --keep <name> for every stack that still has an open issue labeled nl:stack:<name>. It deletes merged stack branches locally and on origin and prints \"finished <stack>\" for each finished stack. For each finished stack, retitle its document: find it with list_documents (query \"stack-notes: <stack>\"), then save_document with its id and title \"[done] stack-notes: <stack>\" (skip one already prefixed [done]; never resend its content). Do not re-implement or second-guess the sweep's checks; report what it prints in your final message.
 
@@ -1023,6 +1033,26 @@ record_session_totals() {
   echo "=== $name: this run cost \$$cost across $calls subprocess call(s), $turns turns, $cache_read cache-read tokens ==="
 }
 
+# Linear status ledger for this run_repo() call (see ts_linear_move).
+LINEAR_LEDGER=""
+
+# Moves the issues this run will dispatch to the queued status, applying the
+# same filters as the dispatch loop (--stack, --limit, existing task PR).
+# Args: ledger, repo path, then the "<id>	<stack>	<file>" records.
+queue_linear_tasks() {
+  local ledger="$1" repo_path="$2"; shift 2
+  [[ -n "$(ts_linear_status_for queued)" ]] || return 0
+  local rec id stack n=0
+  for rec in "$@"; do
+    IFS=$'	' read -r id stack _ <<< "$rec"
+    [[ -z "$STACK" || "$stack" == "$STACK" ]] || continue
+    [[ -z "$LIMIT" || "$n" -lt "$LIMIT" ]] || break
+    [[ -z "$(find_task_pr "$repo_path" "$id" 2>/dev/null)" ]] || continue
+    ts_linear_move "$ledger" "$id" queued
+    n=$((n+1))
+  done
+}
+
 run_repo() {
   local repo_path="$1"
   # Canonicalize before naming anything off it: a relative arg like "."
@@ -1083,6 +1113,12 @@ run_repo() {
     rm -rf "$blockdir"
     end_repo
     return 0
+  fi
+
+  if [[ "$TASK_SOURCE" == linear ]]; then
+    LINEAR_LEDGER="logs/$name/status-ledger.json"
+    ts_linear_ledger_prune "$LINEAR_LEDGER"
+    queue_linear_tasks "$LINEAR_LEDGER" "$repo_path" "${task_records[@]}"
   fi
 
   local -A stack_branch=()
@@ -1204,6 +1240,7 @@ run_repo() {
     local errlog="$base.stderr.log"
 
     echo "--- dispatching task #$num [stack: $stack] ---"
+    [[ "$TASK_SOURCE" != linear ]] || ts_linear_move "$LINEAR_LEDGER" "$num" started
     if dispatch "$task_prompt" "$repo_path" "$base.jsonl" "$base.log" "$errlog" "$run_log"; then
       consecutive_failures=0
     else
