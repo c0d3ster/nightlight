@@ -1111,7 +1111,17 @@ run_repo() {
   if [[ ${#task_records[@]} -eq 0 ]]; then
     echo "skip: $name (no tasks found in Agent-Ready/Verify/Research)"
     rm -rf "$blockdir"
+    local discovered; discovered="$(ts_discovered_count "$repo_path")"
     end_repo
+    if [[ "${discovered:-0}" -gt 0 ]]; then
+      echo "$name has $discovered Discovered item(s) needing planning (run: pnpm plan $name)"
+      # Discovered items never start work; planning only on an interactive terminal.
+      if [[ -t 0 && -t 1 ]]; then
+        local answer
+        read -r -p "Run planning now? [y/N] " answer
+        [[ "$answer" =~ ^[Yy] ]] && bash "$(dirname "$0")/plan.sh" "$name"
+      fi
+    fi
     return 0
   fi
 

@@ -57,9 +57,19 @@ ts_gh_fetch() {
 
 # Any open dispatchable work? Prints nothing; exit status is the answer. Also
 # primes the cache ts_list_tasks reads.
+# Open Discovered issues also count, so a repo holding only those still reaches
+# planning. They stay out of ts_gh_fetch's cache: ts_list_tasks reads it, and
+# Discovered items must never be dispatched.
 ts_is_eligible() {
   ts_gh_fetch "$1" || return 1
-  jq -e 'length > 0' "$TS_GH_CACHE" >/dev/null
+  jq -e 'length > 0' "$TS_GH_CACHE" >/dev/null && return 0
+  [[ "$(ts_discovered_count "$1")" -gt 0 ]]
+}
+
+# Prints the number of open Discovered issues (0 on a gh failure).
+ts_discovered_count() {
+  ts_gh_resolve_repo "$1" || { echo 0; return 0; }
+  gh issue list --repo "$TS_GITHUB_REPO" --state open --label "$(ts_gh_label discovered nl:discovered)"     --limit 200 --json number --jq length 2>/dev/null || echo 0
 }
 
 # Writes one synthesized block file per issue under $2 (clearing anything
