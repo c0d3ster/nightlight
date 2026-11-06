@@ -6,9 +6,11 @@
 # --stop-after compares ids numerically; local ids are plain integers.
 TS_NUMERIC_IDS=1
 
-# Any open dispatchable work? Prints nothing; exit status is the answer.
+# Any open dispatchable work? Prints nothing; exit status is the answer: 0
+# eligible, 1 nothing to do, 2 the lookup failed (a missing TASKS.md).
 ts_is_eligible() {
   local repo_path="$1"
+  [[ -f "$repo_path/TASKS.md" ]] || { echo "error: $repo_path/TASKS.md not found" >&2; return 2; }
   grep -Eq '^\s*- \[ \]' "$repo_path/TASKS.md"
 }
 
