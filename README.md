@@ -154,7 +154,7 @@ An open issue with a section label is a task, and the issue number is the task i
 }
 ```
 
-`linear.teamId` is a team key or UUID. Tasks are open issues on that team with a section label, with ids like `ENG-142` (so `--stop-after` is unavailable; `--limit` and `--stack` work). **Use one Linear team per repo:** the module scopes only by team and `nl:*` labels, so repos sharing a team would dispatch each other's issues.
+`linear.teamId` is a team key or UUID. Tasks are open issues on that team with a section label, with ids like `ENG-142` (so `--stop-after` is unavailable; `--limit` and `--stack` work). **Use one Linear team per repo, inside one workspace.** The module scopes only by team and `nl:*` labels, so two repos sharing a team would each dispatch the other's labeled issues, and `migrate --to linear` dedupe would match issues across repos. Do not share a team. A team per repo gives each repo its own issue prefix, statuses, cycles, and labels, and avoids a second API key or MCP sign-in (the MCP connects to one workspace at a time).
 
 One-time setup:
 
