@@ -215,9 +215,9 @@ ts_stack_notes_export() {
     printf '%s' "$row" | base64 -d | jq -r '"document \(.id), currently titled \"\(.title)\""' > "$dir/$stack.ref"
   done < <(jq -r --arg t "$team_key" '
     .data.documents.nodes[]
-    | select(.title | test("^(\[done\] )?stack-notes: "))
+    | select(.title | test("^([[]done[]] )?stack-notes: "))
     | select((.team.key // "") == $t or ([.project.teams.nodes[]?.key] | index($t)) != null or (.team == null and .project == null))
-    | "\(.title | sub("^\[done\] "; "") | sub("^stack-notes: "; ""))\t\(. | @json | @base64 | gsub("\n"; ""))"' <<< "$resp")
+    | "\(.title | sub("^[[]done[]] "; "") | sub("^stack-notes: "; ""))\t\(. | @json | @base64 | gsub("\n"; ""))"' <<< "$resp")
 }
 
 # Prompt text telling a task session how to write its stack-notes entry.
