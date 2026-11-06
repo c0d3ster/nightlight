@@ -47,8 +47,8 @@ Every script has a `pnpm` alias with the same args (no `--` separator needed). P
 | `./discover.sh [repo] [--scan]` | `pnpm discover` | mine memory (and with `--scan`, the codebase) for task candidates |
 | `./plan.sh [repo]` | `pnpm plan` | break tasks down, number them, assign stacks |
 | `./overnight.sh [repo] [flags]` | `pnpm overnight` | the unattended run |
-| `./migrate.sh <repo> --to github\|linear` | `pnpm migrate` | move `TASKS.md` into issues |
-| `./tidy.sh <repo> [--labels \| --no-labels]` | `pnpm tidy` | review and close stale GitHub issues |
+| `./migrate.sh <repo> --to github\|linear` | `pnpm migrate` | move `TASKS.md` into issues, or adopt a repo's existing issues (no `TASKS.md`) |
+| `./tidy.sh <repo> [--labels \| --no-labels]` | `pnpm tidy` | review and close stale GitHub issues; `--labels` labels the rest per item |
 | `./stats.sh [repo]` | `pnpm stats` | print cost and time totals |
 
 With no repo, `discover.sh`, `plan.sh`, and `overnight.sh` cover every qualifying repo under `PROJECT_REPOS_DIR`. A bare repo name resolves against `PROJECT_REPOS_DIR`; a full path also works.
@@ -167,7 +167,7 @@ One-time setup:
 2. **API key.** Put `LINEAR_API_KEY=...` in an env file. The target repo's env files are checked first, then nightlight's. Gitignored files go before the rest, in the order `.env.local`, `.env.*.local`, `.env.*`, `.env`. Templates (`.example`, `.sample`, `.template`, `.dist`) are skipped. The first match wins, only that line is read, and a warning prints if the file is tracked or not ignored.
 3. **MCP server.** `claude mcp add --scope user --transport http linear https://mcp.linear.app/mcp`, then authenticate via `/mcp`. Confirm with `claude mcp get linear`.
 
-`pnpm migrate <repo> --to linear` (or `github`) moves open `TASKS.md` items into issues, archives checked-off ones, and flips `taskSource` in a small PR. It is interactive: it dedupes against existing issues and merged PRs and asks before creating each one. Re-running after a partial migration is safe, since created issues carry a `Migrated from TASKS.md` marker. `Decisions` and `Discovered` items become `nl:decision` and `nl:discovered` issues.
+`pnpm migrate <repo> --to linear` (or `github`) moves open `TASKS.md` items into issues, archives checked-off ones, and flips `taskSource` in a small PR. It is interactive: it dedupes against existing issues and merged PRs and asks before creating each one. **Already on issues, no `TASKS.md`?** Run `pnpm tidy <repo> --labels` to review and label existing open issues one by one (nothing is labeled without your per-item approval, and tidy never touches `taskSource`), then `pnpm migrate <repo> --to github` to flip `taskSource` in a small PR. Migrate also runs the same review itself when there is no `TASKS.md`. GitHub only; Linear adoption is out of scope. Re-running after a partial migration is safe, since created issues carry a `Migrated from TASKS.md` marker. `Decisions` and `Discovered` items become `nl:decision` and `nl:discovered` issues.
 
 **Why reads use GraphQL and writes use MCP.** The dispatcher is plain bash, which can't call MCP tools, and listing through a model would cost tokens on every eligibility check. Writes go through MCP because the API key then lives only in bash and never reaches the model or an injected issue body. Permissions also work per operation (allow `save_comment`, deny `delete_comment`), whereas allowing the GraphQL endpoint allows everything. The cost is two credentials and an OAuth session that must stay logged in unattended (seven headless launches kept theirs, see `docs/research/linear-mcp.md`). If OAuth proves flaky, the fallback is a thin wrapper script with fixed operations.
 
