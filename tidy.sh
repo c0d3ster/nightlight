@@ -7,6 +7,9 @@
 #   Labeling issues into nl:* sections only makes sense when the repo's
 #   docs/nightlight-meta.json has taskSource "github", so that is the default;
 #   --labels / --no-labels override it.
+#   Adopting a repo that already has issues but no TASKS.md: run
+#   `pnpm tidy <repo> --labels` (per-item approval), then `pnpm migrate <repo> --to github`
+#   to flip taskSource. Tidy never writes taskSource. GitHub only; Linear is out of scope.
 set -e
 
 cd "$(dirname "$0")"

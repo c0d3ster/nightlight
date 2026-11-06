@@ -6,7 +6,7 @@ disable-model-invocation: true
 
 A target repo is attached via --add-dir; args are `--labels` or `--no-labels` (`tidy.sh` sets one from the repo's `taskSource`; none given means `--no-labels`). Nothing is commented on, closed, edited, or relabeled without my explicit per-item approval. Never delete an issue. This session writes nothing to the repo's files and opens no PR. Announce each step in one line before starting it.
 
-`--labels` is only for repos on the GitHub task source (or being migrated to it). With `--no-labels`, never add or create `nl:*` labels, and never offer "label" as an action: the labels would mean nothing to a repo that dispatches from `TASKS.md`.
+`--labels` is only for repos on the GitHub task source (or being migrated to it). For a repo already on issues but not yet opted in, `pnpm tidy <repo> --labels` is the labeling step, then `pnpm migrate <repo> --to github` flips `taskSource`. This skill never changes `taskSource`. With `--no-labels`, never add or create `nl:*` labels, and never offer "label" as an action: the labels would mean nothing to a repo that dispatches from `TASKS.md`.
 
 ## Steps
 
