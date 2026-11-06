@@ -7,7 +7,7 @@
 TS_NUMERIC_IDS=1
 
 # One query per run: ts_is_eligible fetches and caches the merged, filtered,
-# number-sorted issue list here; ts_list_tasks reads the same file.
+# dispatch-ordered issue list here; ts_list_tasks reads the same file.
 TS_GH_CACHE=""
 
 # Label names, overridable via the labels block in nightlight-meta.json.
@@ -44,13 +44,19 @@ ts_gh_resolve_repo() {
 }
 
 # Fetches open issues for each section label once, merges, drops blocked and
-# needs-human, sorts by number. No-op if already cached this run.
+# needs-human, and orders them: issue number within a stack, priority label
+# between groups (a non-solo stack is one group ranked by its best member, each
+# solo task its own group; high first, unlabeled next, low last; ties by lowest
+# issue number). Inherited stacks resolve in number order before regrouping.
+# No-op if already cached this run.
 ts_gh_fetch() {
   local repo_path="$1"
   [[ -n "$TS_GH_CACHE" && -f "$TS_GH_CACHE" ]] && return 0
   ts_gh_resolve_repo "$repo_path" || return 1
   local sections=("$(ts_gh_label agentReady nl:agent-ready)" "$(ts_gh_label verify nl:verify)" "$(ts_gh_label research nl:research)")
-  local blocked needs_human stack_prefix
+  local blocked needs_human stack_prefix prio_high prio_low
+  prio_high="$(ts_gh_label priorityHigh nl:priority:high)"
+  prio_low="$(ts_gh_label priorityLow nl:priority:low)"
   blocked="$(ts_gh_label blocked nl:blocked)"
   needs_human="$(ts_gh_label needsHuman nl:needs-human)"
   stack_prefix="$(ts_gh_label stackPrefix nl:stack:)"
@@ -64,12 +70,19 @@ ts_gh_fetch() {
   done
 
   TS_GH_CACHE="$(mktemp)"
-  jq -s --arg b "$blocked" --arg n "$needs_human" --arg p "$stack_prefix" '
+  jq -s --arg b "$blocked" --arg n "$needs_human" --arg p "$stack_prefix" --arg ph "$prio_high" --arg pl "$prio_low" '
     add
     | unique_by(.number)
     | map(select(([.labels[].name] | index($b) | not) and ([.labels[].name] | index($n) | not)))
     | map(. + {stack: ([.labels[].name | select(startswith($p)) | ltrimstr($p)] | first // null)})
     | sort_by(.number)
+    | reduce .[] as $i ({prev: "solo", out: []};
+        ($i.stack // .prev) as $s | .prev = $s | .out += [$i + {stack: $s}])
+    | .out
+    | map(. + {gk: (if .stack == "solo" then "solo:\(.number)" else .stack end),
+               rank: (([.labels[].name] | if index($ph) then 0 elif index($pl) then 2 else 1 end))})
+    | (group_by(.gk) | map({key: .[0].gk, value: {rank: (map(.rank) | min), first: (map(.number) | min)}}) | from_entries) as $g
+    | sort_by([$g[.gk].rank, $g[.gk].first, .number])
   ' "$raw" > "$TS_GH_CACHE" || { rm -f "$raw" "$TS_GH_CACHE"; TS_GH_CACHE=""; return 1; }
   rm -f "$raw"
 }
@@ -102,8 +115,8 @@ ts_discovered_count() {
 
 # Writes one synthesized block file per issue under $2 (clearing anything
 # already there) and prints "<number>\t<effective-stack>\t<blockfile>"
-# lines in issue-number order. Effective stack is the nl:stack:* label, else the
-# previous task's stack (solo if none yet). Only OWNER/MEMBER/COLLABORATOR
+# lines in dispatch order (see ts_gh_fetch). Effective stack is the nl:stack:*
+# label, else the previous task's stack (solo if none yet), resolved in fetch. Only OWNER/MEMBER/COLLABORATOR
 # comments make it into the block; the issue body is included as-is since the
 # section label (which needs triage access to apply) is the gate.
 ts_list_tasks() {
@@ -112,11 +125,9 @@ ts_list_tasks() {
   rm -f "$outdir"/*.task
   ts_gh_fetch "$repo_path" || return 1
 
-  local idx=0 prev_stack="" num stack file
+  local idx=0 num stack file
   while IFS=$'\t' read -r num stack; do
     num="${num%$'\r'}"; stack="${stack%$'\r'}"
-    [[ "$stack" == "null" || -z "$stack" ]] && stack="${prev_stack:-solo}"
-    prev_stack="$stack"
     idx=$((idx+1))
     file="$outdir/$(printf '%04d' "$idx")-$num.task"
     jq -r --argjson n "$num" --arg s "$stack" '
@@ -127,7 +138,7 @@ ts_list_tasks() {
             | "\n\n### Comment by \(.author.login // "unknown")\n\n\(.body // "")"] | join(""))
     ' "$TS_GH_CACHE" | tr -d '\r' > "$file"
     printf '%s\t%s\t%s\n' "$num" "$stack" "$file"
-  done < <(jq -r '.[] | "\(.number)\t\(.stack // "")"' "$TS_GH_CACHE")
+  done < <(jq -r '.[] | "\(.number)\t\(.stack)"' "$TS_GH_CACHE")
 }
 
 # How this source writes a task id in the TASK_RESULT line the prompt asks for.
