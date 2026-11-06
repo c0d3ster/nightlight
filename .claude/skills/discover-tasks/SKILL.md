@@ -14,7 +14,7 @@ Determine this from the attached directory's structure, never by assumption: doe
 - No, but its immediate subdirectories do: the attached directory is `PROJECT_REPOS_DIR` itself, and the repo set is those subdirectories. Run this flow instead of a single Phases 1–4 pass:
   1. Announce: "Found N repo(s) under `<dir>`."
   2. Dispatch one `general-purpose` agent per repo for Phase 1 + Phase 2 steps 1–2 (memory only), and, when `--scan` is passed, one `task-scout` agent per repo for the scan (subagents generally cannot spawn subagents, so dispatch `task-scout` directly from here). All in a single message, foreground, batched in groups of ~8 if there are more than that, each told its one repo's absolute path. Each reports candidates only (task text, rationale, source) — report only, never ask, never write.
-  3. Once every dispatch returns, go through repos in the order they were listed. For each one: run Phase 2 step 4 (present its candidates, get my approval), then immediately Phase 3 (write) and Phase 4 (finalize) for that repo, before moving to the next.
+  3. Once every dispatch returns, go through repos in the order they were listed. For each one: run Phase 2 steps 4 and 5 (choose docs, then present its candidates and get my approval), then immediately Phase 3 (write) and Phase 4 (finalize) for that repo, before moving to the next.
 
 ## Task source mode
 
@@ -49,7 +49,8 @@ Announce each phase to me in one line before starting it.
 1. Read the target repo's MEMORY.md and its indexed files. Pull only entries reading as concrete, discrete work — most `project`-type memories are context, not tasks.
 2. Cross-reference against the target repo's TASKS.md (open items) and `docs/tasks-archive/*.md` (completed). Drop anything already covered.
 3. `--scan` passed: dispatch one `task-scout` agent (foreground, absolute repo path in the prompt) for the read-only Docs, README, and code passes, or use its result directly if already inside a per-repo dispatch. Its agent file defines the passes and the output contract (task text, rationale, source).
-4. Announce: "Found N candidate(s) from memory[, M from repo scan]." Present the full list — task text, one-line rationale, source — for my approval. Write nothing until I approve; accept/reject individually.
+4. Choose docs first. The scan's `## Docs` summary lists every plan/PRD/spec/research doc with how much is implemented and how many untracked items remain. When it lists 2+ docs with candidates, or any research doc, show it as a numbered list (path, kind, `~N% implemented`, items remaining; research docs marked "opt-in, no candidates yet") and ask which to break out into Discovered. Skip the question for a single doc with candidates and no research docs. Drop the candidates of every doc I don't pick. For research docs I pick, re-dispatch `task-scout` (foreground, repo path plus "Include research docs: <paths>") and add its doc candidates to the list. README, code and memory candidates are not affected by this choice.
+5. Announce: "Found N candidate(s) from memory[, M from repo scan]." Present the remaining list grouped by source doc (memory, README and code candidates in their own groups) — task text, one-line rationale, source — for my approval. Write nothing until I approve; accept/reject individually.
 
 ## Phase 3: write approved candidates
 

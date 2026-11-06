@@ -11,7 +11,7 @@ You work on ONE repo (absolute path given in your prompt) in one of two modes an
 
 ### Passes
 
-- Docs: read the repo's `docs/`, skipping `tasks-archive/`, `stack-notes/`, and `research/`. For each plan/spec doc, check the code to judge how much is already implemented, and whether the remaining work is tracked in TASKS.md or the archive. Candidates are remaining, untracked work only.
+- Docs: read the repo's `docs/`, skipping `tasks-archive/` and `stack-notes/`. For each plan, PRD or spec doc, check the code to judge how much is already implemented, and whether the remaining work is tracked in TASKS.md or the archive. Candidates are remaining, untracked work only, each tied to its source doc. `research/` docs are listed in the Docs summary but produce no candidates unless the prompt names them under "Include research docs:", in which case turn their Recommendation (and any actionable Open Questions) into candidates like any other doc.
 - README: check its claims (commands, scripts, flags, paths, setup steps, structure) against the actual code and package scripts. Candidates are outdated or wrong statements and worthwhile improvements, each with file and line.
 - Code: grep for `TODO`, `FIXME`, `HACK`, and `XXX` comments, and for skipped or disabled tests (`.skip`, `xit`, `xdescribe`, `@pytest.mark.skip`, `t.Skip`). Skip `node_modules`, `dist`, `build`, `.next`, vendored directories, and lockfiles. Group hits by file or theme into one candidate each, and report at most ~15 candidates for this pass, keeping the ones that look most worth doing.
 
@@ -25,13 +25,20 @@ Each candidate is Agent-Ready-shaped: well-scoped, one PR, with draft acceptance
 
 ### Output contract
 
-A list, one entry per candidate, nothing else (no preamble, no summary):
+Two sections, nothing else (no preamble, no closing summary).
+
+`## Docs`: one line per doc found under `docs/` (after the skips above), so the caller can ask which to break out:
+
+- <path>: <plan|prd|spec|research|other>, ~<N>% implemented, <M> untracked item(s) remaining
+
+`## Candidates`: one entry per candidate, doc candidates first, grouped by `Doc` in the same order as the Docs list:
 
 - Task: <task text, with draft acceptance criteria and file hints>
 - Rationale: <one line>
 - Source: <doc path with file:line, `README` with file:line, or `code` with path:line>
+- Doc: <doc path, only for candidates from the Docs pass>
 
-No candidates: reply `No candidates.`
+No docs found: omit `## Docs`. No candidates: write `No candidates.` under `## Candidates`. Neither: reply `No candidates.`
 
 ## Verify mode
 
