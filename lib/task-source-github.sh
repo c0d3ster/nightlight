@@ -182,12 +182,12 @@ ts_stack_notes_export() {
     [[ -n "$stack" ]] || continue
     [[ -z "$only" || "$stack" == "$only" ]] || continue
     jq -r --arg s "$stack" '
-      [.[] | select((.title | sub("^\[done\] "; "") | sub("^stack-notes: "; "")) == $s)] | first
+      [.[] | select((.title | sub("^[[]done[]] "; "") | sub("^stack-notes: "; "")) == $s)] | first
       | [.comments[]?.body] | join("\n\n")' <<< "$raw" | tr -d '\r' > "$dir/$stack.md"
     jq -r --arg s "$stack" '
-      [.[] | select((.title | sub("^\[done\] "; "") | sub("^stack-notes: "; "")) == $s)] | first
+      [.[] | select((.title | sub("^[[]done[]] "; "") | sub("^stack-notes: "; "")) == $s)] | first
       | "issue #\(.number), currently titled \"\(.title)\""' <<< "$raw" > "$dir/$stack.ref"
-  done < <(jq -r '.[] | select(.title | test("^(\[done\] )?stack-notes: ")) | .title | sub("^\[done\] "; "") | sub("^stack-notes: "; "")' <<< "$raw")
+  done < <(jq -r '.[] | select(.title | test("^([[]done[]] )?stack-notes: ")) | .title | sub("^[[]done[]] "; "") | sub("^stack-notes: "; "")' <<< "$raw")
 }
 
 # Prompt text telling a task session how to write its stack-notes entry.
