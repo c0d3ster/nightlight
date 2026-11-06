@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # usage: pnpm migrate <repo> --to github — opens an interactive, approval-gated
-#   session that moves one repo's open TASKS.md items into GitHub issues.
-#   Local-to-GitHub only; a repo argument is required (no no-arg fan-out,
+#   session that moves one repo's open TASKS.md items into GitHub issues, or,
+#   for a repo with issues but no TASKS.md, reviews them (tidy) and flips taskSource.
+#   Local-to-remote only; a repo argument is required (no no-arg fan-out,
 #   since this rewrites a repo's task source).
 set -e
 
