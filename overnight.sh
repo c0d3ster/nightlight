@@ -1113,7 +1113,7 @@ run_repo() {
   if [[ ${#task_records[@]} -eq 0 ]]; then
     echo "skip: $name (no tasks found in Agent-Ready/Verify/Research)"
     rm -rf "$blockdir"
-    local discovered; discovered="$(ts_discovered_count "$repo_path")"
+    local discovered; discovered="$(ts_discovered_count "$repo_path")" || discovered=0
     end_repo
     if [[ "${discovered:-0}" -gt 0 ]]; then
       echo "$name has $discovered Discovered item(s) needing planning (run: pnpm plan $name)"
