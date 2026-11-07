@@ -90,10 +90,14 @@ ts_is_eligible() {
 # Prints the number of open Discovered issues; on a gh failure prints 0, reports
 # the error on stderr and returns 1.
 ts_discovered_count() {
-  local out
-  ts_gh_resolve_repo "$1" || { echo 0; return 1; }
-  out="$(gh issue list --repo "$TS_GITHUB_REPO" --state open --label "$(ts_gh_label discovered nl:discovered)" --limit 200 --json number --jq length 2>&1)"     || { ts_gh_explain "gh issue list failed for the discovered label" "$out"; echo 0; return 1; }
-  echo "$out"
+  local out err; err="$(mktemp)"
+  ts_gh_resolve_repo "$1" || { rm -f "$err"; echo 0; return 1; }
+  if out="$(gh issue list --repo "$TS_GITHUB_REPO" --state open --label "$(ts_gh_label discovered nl:discovered)" \
+    --limit 200 --json number --jq length 2>"$err")"; then
+    rm -f "$err"; echo "$out"; return 0
+  fi
+  ts_gh_explain "gh issue list failed for the discovered label" "$(cat "$err")"
+  rm -f "$err"; echo 0; return 1
 }
 
 # Writes one synthesized block file per issue under $2 (clearing anything

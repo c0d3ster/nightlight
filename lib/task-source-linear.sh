@@ -135,7 +135,8 @@ ts_discovered_count() {
       labels: {some: {name: {eq: $label}}}
     }) { nodes { identifier } }
   }'
-  resp="$(ts_linear_gql "$gql" "$(jq -cn --arg t "$TS_LINEAR_TEAM_ID" --arg l "$(ts_linear_label discovered nl:discovered)"     '{team: $t, label: $l}')")" || { echo 0; return 1; }
+  resp="$(ts_linear_gql "$gql" "$(jq -cn --arg t "$TS_LINEAR_TEAM_ID" --arg l "$(ts_linear_label discovered nl:discovered)" \
+    '{team: $t, label: $l}')")" || { echo 0; return 1; }
   jq -r '.data.issues.nodes | length' <<< "$resp"
 }
 
