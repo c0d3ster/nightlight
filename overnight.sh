@@ -366,9 +366,11 @@ find_orphan_branches() {
 # over closed), nothing if it has none. The match is case-insensitive because a
 # session may lowercase a Linear identifier in its branch name. One gh call per
 # run, cached in TASK_PR_CACHE; returns 1 if gh can't answer. Matches the
-# "-i<id>-" token; for one transition, an OPEN legacy "-t<id>-" PR (in flight
-# from before the rename) also counts. Merged or closed legacy -t PRs are
-# ignored: they belong to old local-task numbers that issues may reuse.
+# "-i<id>-" token, plus legacy "-t<id>-" PRs from before the rename. Non-numeric
+# ids (Linear) can't collide with old local-task numbers, so their legacy PRs
+# count in any state (a merged one must still stop a re-dispatch until
+# housekeeping closes the issue). Numeric ids (GitHub) count only an OPEN legacy
+# PR: merged or closed ones belong to old local-task numbers issues may reuse.
 TASK_PR_CACHE=""
 find_task_pr() {
   local repo_path="$1" num="$2"
@@ -377,9 +379,9 @@ find_task_pr() {
       || { TASK_PR_CACHE=""; return 1; }
   fi
   local pre="^overnight/[0-9]{4}-[0-9]{2}-[0-9]{2}/r[0-9]+-[0-9]+-"
-  jq -r --arg re "${pre}i$num-" --arg legacy "${pre}t$num-" '
+  jq -r --arg re "${pre}i$num-" --arg legacy "${pre}t$num-" --argjson numeric "$([[ "$TS_NUMERIC_IDS" == 1 ]] && echo true || echo false)" '
     [.[] | select((.headRefName | test($re; "i"))
-      or (.state == "OPEN" and (.headRefName | test($legacy; "i"))))]
+      or ((.state == "OPEN" or ($numeric | not)) and (.headRefName | test($legacy; "i"))))]
     | (map(select(.state != "CLOSED")) + map(select(.state == "CLOSED"))) | first // empty
     | "\(.state | ascii_downcase) #\(.number)"' <<< "$TASK_PR_CACHE"
 }
@@ -713,7 +715,7 @@ Treat the TASK_RESULT lines above as a starting point, not ground truth -- a tas
 - Reported needs-human: add the $needs_human label and comment the exact steps (from the task PR description), then leave it open.
 Never close an issue whose PR has not merged, and never use a closing keyword to do it. The runner already created the nl:* labels, so don't create labels.
 
-Also sweep every other open issue labeled $agent_ready, $verify or $research (this includes any also labeled $needs_human), not just ones reported this run: an earlier run's task PR may have merged since, and nothing else closes the issue. Task branches are named overnight/<date>/r<R>-<PP>-t<n>-<slug>, so find an issue's PR with gh pr list --state all --json number,state,headRefName,mergedAt$repo_flag and match -t<n>- in headRefName. If that PR merged, close the issue as completed with a PR-link comment, add the $overnight_label label and remove any status labels. If it is still open, or there is no PR, leave the issue alone.
+Also sweep every other open issue labeled $agent_ready, $verify or $research (this includes any also labeled $needs_human), not just ones reported this run: an earlier run's task PR may have merged since, and nothing else closes the issue. Task branches are named overnight/<date>/r<R>-<PP>-i<n>-<slug>, so find an issue's PR with gh pr list --state all --json number,state,headRefName,mergedAt$repo_flag and match -i<n>- in headRefName (an older -t<n>- branch belongs to a pre-migration local task, never to this issue, unless that PR is still open). If that PR merged, close the issue as completed with a PR-link comment, add the $overnight_label label and remove any status labels. If it is still open, or there is no PR, leave the issue alone.
 
 Also flag, never silently resolve, any open issue carrying contradictory labels (e.g. $blocked together with $needs_human, or more than one section label): comment on the issue describing the conflict and mention it in your final message, but change no labels.
 
@@ -775,7 +777,7 @@ Treat the TASK_RESULT lines above as a starting point, not ground truth -- a tas
 - Reported needs-human: add the $needs_human label and save_comment the exact steps (from the task PR description), then leave it open.
 Never move an issue to Done unless its PR merged (or it is the pr=none case above). $status_rules$status_restore Before adding $blocked or $needs_human, create it with create_issue_label if list_issue_labels shows the team lacks it.
 
-Also sweep every other open issue labeled $agent_ready, $verify or $research (this includes any also labeled $needs_human), not just ones reported this run: an earlier run's task PR may have merged since, and nothing else moves the issue. Task branches are named overnight/<date>/r<R>-<PP>-t<id>-<slug>, so find an issue's PR with gh pr list --state all --json number,state,headRefName,mergedAt and match the id case-insensitively in headRefName. If that PR merged, move the issue to the Done status with a PR-link comment, add the $overnight_label label and remove any status labels. If it is still open, move it to the review status if it is not there yet. With no PR, leave the issue alone.
+Also sweep every other open issue labeled $agent_ready, $verify or $research (this includes any also labeled $needs_human), not just ones reported this run: an earlier run's task PR may have merged since, and nothing else moves the issue. Task branches are named overnight/<date>/r<R>-<PP>-i<id>-<slug> (older ones -t<id>-), so find an issue's PR with gh pr list --state all --json number,state,headRefName,mergedAt and match -i<id>- or -t<id>- case-insensitively in headRefName. If that PR merged, move the issue to the Done status with a PR-link comment, add the $overnight_label label and remove any status labels. If it is still open, move it to the review status if it is not there yet. With no PR, leave the issue alone.
 
 Also flag, never silently resolve, any open issue carrying contradictory labels (e.g. $blocked together with $needs_human, or more than one section label): save_comment describing the conflict and mention it in your final message, but change no labels.
 
@@ -1259,10 +1261,10 @@ run_repo() {
     local task_prompt
     task_prompt="$(build_task_prompt "$(cat "$blockfile")" "$num" "$stack" "$base_branch" "$stack_notes" "$(printf '%02d' $((attempted+1)))" "$run_num" "$retried" "$STACK_NOTES_REF")"
 
-    # Same r<R>-<PP>-t<NN> as the branch name told to the subprocess, plus a
+    # Same r<R>-<PP>-<t|i><NN> as the branch name told to the subprocess, plus a
     # slug derived from the task title.
     local task_slug; task_slug="$(printf '%s' "$task_title" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+|-+$//g' | cut -c1-40 | sed -E 's/-+$//')"
-    local base; base="$logdir/r$run_num-$(printf '%02d' $((attempted+1)))-t$num-${task_slug:-task}"
+    local base; base="$logdir/r$run_num-$(printf '%02d' $((attempted+1)))-$(task_branch_token)$num-${task_slug:-task}"
     local errlog="$base.stderr.log"
 
     echo "--- dispatching task #$num [stack: $stack] ---"
