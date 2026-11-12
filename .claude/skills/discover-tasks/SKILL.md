@@ -50,12 +50,12 @@ Announce each phase to me in one line before starting it.
 2. Cross-reference against the target repo's TASKS.md (open items) and `docs/tasks-archive/*.md` (completed). Drop anything already covered.
 3. `--scan` passed: dispatch one `task-scout` agent (foreground, absolute repo path in the prompt) for the read-only Docs, README, and code passes, or use its result directly if already inside a per-repo dispatch. Its agent file defines the passes and the output contract (task text, rationale, source).
 4. Choose docs first. The scan's `## Docs` summary lists every plan/PRD/spec/research doc with how much is implemented and how many untracked items remain. When it lists 2+ docs with candidates, or any research doc, show it as a numbered list (path, kind, `~N% implemented`, items remaining; research docs marked "opt-in, no candidates yet") and ask which to break out into Discovered. Skip the question for a single doc with candidates and no research docs. Drop the candidates of every doc I don't pick. For research docs I pick, re-dispatch `task-scout` (foreground, repo path plus "Include research docs: <paths>") and add its doc candidates to the list. README, code and memory candidates are not affected by this choice.
-5. Announce: "Found N candidate(s) from memory[, M from repo scan]." Present the remaining list grouped by source doc (memory, README and code candidates in their own groups) — task text, one-line rationale, source — for my approval. Write nothing until I approve; accept/reject individually.
+5. Announce: "Found N candidate(s) from memory[, M from repo scan]." Present the remaining list grouped by source doc (memory, README and code candidates in their own groups), each plan/PRD/spec group as its dependency chains with every unit listed and its gate noted — task text, one-line rationale, source — for my approval. Write nothing until I approve; accept/reject individually.
 
 ## Phase 3: write approved candidates
 
 1. Announce: "Writing N approved item(s) to TASKS.md."
-2. Append each approved candidate under `## Discovered` (create if absent): one-line description + source. No `#<n>` or `[stack]` — that's `/plan-tasks`'s job.
+2. Append each approved candidate under `## Discovered` (create if absent): one-line description + source, plus its `Depends on` and `Gate` for doc candidates (in remote modes, in the issue body), with any decision I made here recorded in place of the gate. No `#<n>` or `[stack]` — that's `/plan-tasks`'s job.
 3. Memory-sourced items: delete the source memory file and its MEMORY.md line. Leave rejected candidates untouched.
 4. Announce: "Done — N item(s) added to TASKS.md § Discovered, N memory file(s) cleared."
 
