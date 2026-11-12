@@ -44,11 +44,11 @@ Each dispatch is self-contained (the agent has no memory of this session): its p
 
 Once every dispatched investigation has returned, process repos one at a time, in the order they were attached (single-repo mode: just the one). For each repo:
 
-1. Cross-reference reported touch-points and dependencies across that repo's items only — stacks and numbering never cross repos: share `[stack: <name>]`, in execution order, if they depend on each other or touch the same files; independent items get `[stack: solo]`. When in doubt, stack.
+1. Cross-reference reported touch-points and dependencies across that repo's items only — stacks and numbering never cross repos: share `[stack: <name>]`, in execution order, if they depend on each other or touch the same files; independent items get `[stack: solo]`. When in doubt, stack. An item carrying a `Proposed stack:` line (from `/discover-tasks`, which I already approved) keeps that stack name and order by default; deviate only with a stated reason in the proposal. An item with an `Open decision:` line goes to Decisions unless I settle it at approval, in which case it becomes `Decided:`.
 2. Assign each item a stable `#<n>`, starting from that repo's own `nextTaskNumber` and incrementing per item, in write order.
 3. Propose where each item lands in its target section's existing list — default to the bottom, but ask me explicitly where I want each one; I may want something worked first (e.g. a quick bug fix ahead of a bigger feature).
 
-Present the full proposal for my approval BEFORE writing anything — triage decisions (for former Discovered items), breakdowns/numbers/stack tags, and proposed position per item. After I approve:
+Present the full proposal for my approval BEFORE writing anything — triage decisions (for former Discovered items), breakdowns/numbers/stack tags, and proposed position per item. Show each item's full text exactly as it will be written (TASKS.md lines, or the whole issue body in remote modes), not a summary. Use the same terms everywhere: "stack" (never track or chain), `Decided:` and `Open decision:` (never gate). After I approve:
 
 - Write the breakdowns, `#<n>` numbers, and `[stack]` tags into that repo's TASKS.md at the approved position — every checkbox line gets its number right after the checkbox, before the stack tag (e.g. `- [ ] #48 [stack: auth] Add rate limiting to login endpoint`).
 - Remove triaged items from that repo's `## Discovered`.
