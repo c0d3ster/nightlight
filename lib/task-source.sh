@@ -30,17 +30,18 @@ source lib/env.sh
 load_task_source() {
   local repo_path="$1" meta="$1/docs/nightlight-meta.json"
   TASK_SOURCE=local TS_GITHUB_REPO="" TS_LINEAR_TEAM_ID="" TS_LINEAR_STATUSES_JSON="{}" TS_LABELS_JSON="{}"
-  # The model every claude -p session for this repo runs on. An alias (opus,
-  # sonnet, haiku) follows the newest release of that family, so a new model
-  # is picked up without touching nightlight or the meta.
-  NL_MODEL=sonnet
+  # The model every claude -p session for this repo runs on: the meta's
+  # "model", else NIGHTLIGHT_MODEL from nightlight's .env (your plan is about
+  # you, not the repo), else sonnet to keep runs cheap. An alias (opus,
+  # sonnet, haiku) follows the newest release of that family.
+  NL_MODEL="${NIGHTLIGHT_MODEL:-sonnet}"
   if [[ -f "$meta" ]]; then
     jq -e . "$meta" >/dev/null 2>&1 || { echo "error: $meta is not valid JSON"; return 1; }
     TASK_SOURCE="$(jq -r '.taskSource // "local"' "$meta")"
     TS_LABELS_JSON="$(jq -c '.labels // {}' "$meta")"
-    jq -e '(.model // "sonnet") | type == "string" and length > 0' "$meta" >/dev/null \
+    jq -e '(.model // "x") | type == "string" and length > 0' "$meta" >/dev/null \
       || { echo "error: model in $meta must be a non-empty string (an alias like sonnet or opus, or a full model id)"; return 1; }
-    NL_MODEL="$(jq -r '.model // "sonnet"' "$meta")"
+    NL_MODEL="$(jq -r --arg d "$NL_MODEL" '.model // $d' "$meta")"
   fi
   case "$TASK_SOURCE" in
     local) ;;
