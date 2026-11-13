@@ -129,6 +129,16 @@ After every dispatched subprocess, its `result` event (cost, duration, turns, to
 - **`#<n>`:** a permanent, never-reused number assigned by `/plan-tasks` on every section, tracked in `docs/nightlight-meta.json`'s `nextTaskNumber`. It lets a PR or note reference a task after it's archived.
 - **`[stack: <name>]`:** tasks sharing a name are branched and PR'd in sequence. Unannotated tasks inherit the previous task's stack. `solo` is reserved: each solo task branches from and PRs to `main` independently. Assign these in `/plan-tasks`, not by hand.
 
+### Model
+
+Overnight sessions run on `opus` unless the target repo's `docs/nightlight-meta.json` sets `model`:
+
+```json
+{ "model": "sonnet" }
+```
+
+Use an alias (`opus`, `sonnet`, `haiku`) so new releases are picked up automatically. A full model id pins one version. The interactive skills (`/plan-tasks`, `/discover-tasks`) run on your session's model, and their `task-scout` / `task-investigator` subagents on the `model:` in `.claude/agents/`.
+
 ### GitHub issues (opt-in)
 
 In the target repo's `docs/nightlight-meta.json`:
