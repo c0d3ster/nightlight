@@ -852,7 +852,7 @@ dispatch() {
     printf '%s' "$prompt" \
       | claude \
       --add-dir "$repo_path" \
-      --model sonnet \
+      --model "$NL_MODEL" \
       --permission-mode acceptEdits \
       --settings .claude/settings.json \
       --output-format stream-json \
