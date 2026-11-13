@@ -131,13 +131,13 @@ After every dispatched subprocess, its `result` event (cost, duration, turns, to
 
 ### Model
 
-Overnight sessions run on `sonnet` to keep runs cheap, unless the target repo's `docs/nightlight-meta.json` sets `model`:
+Overnight sessions run on `sonnet` to keep runs cheap. To change that for every repo, set `NIGHTLIGHT_MODEL` in nightlight's `.env` (for example `NIGHTLIGHT_MODEL=opus` on a Max plan). A single repo can override both with `model` in its `docs/nightlight-meta.json`:
 
 ```json
-{ "model": "opus" }
+{ "model": "sonnet" }
 ```
 
-Use an alias (`opus`, `sonnet`, `haiku`) so new releases are picked up automatically. A full model id pins one version. `pnpm migrate` asks which model to use when it writes the meta file; for any other repo, add the field by hand. The interactive skills (`/plan-tasks`, `/discover-tasks`) run on your session's model, and their `task-scout` / `task-investigator` subagents on the `model:` in `.claude/agents/`.
+Order: the meta's `model`, then `NIGHTLIGHT_MODEL`, then `sonnet`. Use an alias (`opus`, `sonnet`, `haiku`) so new releases are picked up automatically. A full model id pins one version. `pnpm migrate` asks whether the repo should keep the default when it writes the meta file. The interactive skills (`/plan-tasks`, `/discover-tasks`) run on your session's model, and their `task-scout` / `task-investigator` subagents on the `model:` in `.claude/agents/`.
 
 ### GitHub issues (opt-in)
 
