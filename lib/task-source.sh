@@ -33,14 +33,14 @@ load_task_source() {
   # The model every claude -p session for this repo runs on. An alias (opus,
   # sonnet, haiku) follows the newest release of that family, so a new model
   # is picked up without touching nightlight or the meta.
-  NL_MODEL=opus
+  NL_MODEL=sonnet
   if [[ -f "$meta" ]]; then
     jq -e . "$meta" >/dev/null 2>&1 || { echo "error: $meta is not valid JSON"; return 1; }
     TASK_SOURCE="$(jq -r '.taskSource // "local"' "$meta")"
     TS_LABELS_JSON="$(jq -c '.labels // {}' "$meta")"
-    jq -e '(.model // "opus") | type == "string" and length > 0' "$meta" >/dev/null \
-      || { echo "error: model in $meta must be a non-empty string (an alias like opus, or a full model id)"; return 1; }
-    NL_MODEL="$(jq -r '.model // "opus"' "$meta")"
+    jq -e '(.model // "sonnet") | type == "string" and length > 0' "$meta" >/dev/null \
+      || { echo "error: model in $meta must be a non-empty string (an alias like sonnet or opus, or a full model id)"; return 1; }
+    NL_MODEL="$(jq -r '.model // "sonnet"' "$meta")"
   fi
   case "$TASK_SOURCE" in
     local) ;;
