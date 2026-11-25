@@ -14,8 +14,10 @@
 #
 # The one stack-notes sweep, shared by housekeeping (all three task sources) and
 # /migrate-tasks. For every docs/stack-notes/<stack>.md in the target repo:
-#   1. check each "Branch: " line's PR (gh pr view); delete any branch whose PR
-#      MERGED, locally and on origin (even when the file is kept)
+#   1. check each "Branch: " line's PR (REST, lib/gh-rest.sh); delete any branch
+#      whose PR MERGED, locally and on origin (even when the file is kept). The
+#      origin delete is best-effort: cloud sessions refuse it, which prints
+#      "delete-failed <branch> (origin): <reason>" and changes nothing else
 #   2. `git rm` the file when the stack is finished (staged, never committed;
 #      the caller's commit includes it)
 # A stack is finished only when every Branch: PR is MERGED, it is not named by
@@ -23,10 +25,11 @@
 # The caller passes one --keep per stack that still has open work elsewhere:
 # a stack dispatched this run, or one with open tracker issues (nl:stack:<name>).
 # Any gh failure, an unmerged PR, or zero Branch: lines keeps the file.
-# Prints one line per decision: "deleted-branch", "removed", "finished",
-# "removed-legacy" or "kept <reason>".
+# Prints one line per decision: "deleted-branch", "delete-failed", "removed",
+# "finished", "removed-legacy" or "kept <reason>".
 
 set -u
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/gh-rest.sh"
 
 repo="${1:?usage: stack-notes.sh <repo-path> [--keep <stack>]...}"
 shift
@@ -42,6 +45,9 @@ done
 
 notes_dir="$repo/docs/stack-notes"
 [[ -d "$notes_dir" || -n "$remote_dir" ]] || { echo "no docs/stack-notes in $repo, nothing to sweep"; exit 0; }
+# owner/name for the PR lookups; empty on failure, which makes every lookup fail
+# and so keeps every stack.
+slug="$(ghr_repo "$repo" 2>/dev/null)" || slug=""
 
 # Stacks with an open task in a local TASKS.md, under any unchecked glyph.
 if [[ -z "$remote_dir" && -f "$repo/TASKS.md" ]]; then
@@ -71,10 +77,12 @@ while IFS= read -r stack; do
   all_merged=1
   while IFS= read -r branch; do
     [[ "$branch" =~ ^[A-Za-z0-9._/-]+$ ]] || { echo "kept $stack: unsafe branch name '$branch'"; all_merged=0; continue; }
-    if ! state="$(cd "$repo" && gh pr view "$branch" --json state --jq .state 2>/dev/null)"; then
+    if ! pr="$(ghr_pr_view "$slug" "$branch" 2>/dev/null)" || ! state="$(jq -er .state <<< "$pr")"; then
       # A discarded retry attempt leaves an entry whose branch is gone and never
       # had a PR; it must not hold the stack open.
-      if ! git -C "$repo" show-ref --verify --quiet "refs/heads/$branch"         && ! git -C "$repo" ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1         && [[ "$(cd "$repo" && gh pr list --head "$branch" --state all --json number --jq length 2>/dev/null)" == "0" ]]; then
+      if ! git -C "$repo" show-ref --verify --quiet "refs/heads/$branch" \
+        && ! git -C "$repo" ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1 \
+        && [[ "$(ghr_pr_list "$slug" --head "$branch" --state all 2>/dev/null | jq length)" == "0" ]]; then
         echo "ignored-stale $branch (no branch, no PR)"
         continue
       fi
@@ -89,7 +97,11 @@ while IFS= read -r stack; do
     fi
     git -C "$repo" branch -D "$branch" >/dev/null 2>&1 && echo "deleted-branch $branch (local)"
     if git -C "$repo" ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
-      git -C "$repo" push --quiet origin --delete "$branch" 2>/dev/null && echo "deleted-branch $branch (origin)"
+      if err="$(ghr_delete_branch "$slug" "$branch" "$repo" 2>&1)"; then
+        echo "deleted-branch $branch (origin)"
+      else
+        echo "delete-failed $branch (origin): ${err#warning: }"
+      fi
     fi
   done <<< "$branches"
 
