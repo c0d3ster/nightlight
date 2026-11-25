@@ -3,6 +3,9 @@
 # label. Sourced by overnight.sh's run_repo(); see docs/plans/multi-task-source.md
 # Phase 2 for the design and the ts_* contract in Phase 1.2.
 
+# Every GitHub call goes through the REST wrappers (GraphQL is blocked in cloud sessions).
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/gh-rest.sh"
+
 # --stop-after compares ids numerically; issue numbers are plain integers.
 TS_NUMERIC_IDS=1
 
@@ -16,7 +19,7 @@ ts_gh_label() {
   jq -r --arg k "$key" --arg d "$default" '.[$k] // $d' <<< "${TS_LABELS_JSON:-{\}}"
 }
 
-# Creates the nl:* labels the repo lacks (gh rejects labels that don't exist):
+# Creates the nl:* labels the repo lacks (GitHub rejects labels that don't exist):
 # the canonical set from the labels config (sections, blocked, needs-human,
 # overnight, discovered, stack-notes) plus any extra names in $2... (e.g.
 # nl:stack:<name>, nl:decision, nl:priority:high). Idempotent: lists once, creates
@@ -25,17 +28,18 @@ ts_gh_ensure_labels() {
   local repo_path="$1"; shift
   ts_gh_resolve_repo "$repo_path" || return 1
   local have err name rc=0
-  have="$(gh label list --repo "$TS_GITHUB_REPO" --limit 1000 --json name --jq '.[].name' 2>&1)" \
+  have="$(ghr_label_list "$TS_GITHUB_REPO" 2>&1)" \
     || { ts_gh_explain "gh label list failed" "$have"; return 1; }
+  have="$(jq -r '.[].name' <<< "$have")"
   for name in "$(ts_gh_label agentReady nl:agent-ready)" "$(ts_gh_label verify nl:verify)" "$(ts_gh_label research nl:research)" \
     "$(ts_gh_label blocked nl:blocked)" "$(ts_gh_label needsHuman nl:needs-human)" "$(ts_gh_label overnight nl:overnight)" \
     "$(ts_gh_label discovered nl:discovered)" "$(ts_gh_label stackNotes nl:stack-notes)" "$@"; do
     [[ -n "$name" ]] || continue
     grep -qixF -- "$name" <<< "$have" && continue
     have="$have"$'\n'"$name"
-    if err="$(gh label create "$name" --repo "$TS_GITHUB_REPO" 2>&1)"; then
+    if err="$(ghr_label_create "$TS_GITHUB_REPO" "$name" 2>&1)"; then
       echo "created $name"
-    elif ! grep -qi 'already exists' <<< "$err"; then
+    elif ! grep -qiE 'already.exists' <<< "$err"; then
       ts_gh_explain "gh label create $name failed" "$err"; rc=1
     fi
   done
@@ -61,7 +65,7 @@ ts_gh_explain() {
 ts_gh_resolve_repo() {
   [[ -n "$TS_GITHUB_REPO" ]] && return 0
   local out err; err="$(mktemp)"
-  if out="$(cd "$1" && gh repo view --json nameWithOwner --jq .nameWithOwner 2>"$err")" && [[ -n "$out" ]]; then
+  if out="$(ghr_repo "$1" 2>"$err")" && [[ -n "$out" ]]; then
     TS_GITHUB_REPO="$out"; rm -f "$err"; return 0
   fi
   ts_gh_explain "can't resolve the repo from origin (or set github.repo in docs/nightlight-meta.json)" "$(cat "$err")"
@@ -90,8 +94,7 @@ ts_gh_fetch() {
   local raw; raw="$(mktemp)"
   local label
   for label in "${sections[@]}"; do
-    gh issue list --repo "$TS_GITHUB_REPO" --state open --label "$label" --limit 200 \
-      --json number,title,body,labels,author,comments,createdAt >> "$raw" \
+    ghr_issue_list "$TS_GITHUB_REPO" --state open --label "$label" --comments >> "$raw" \
       || { echo "error: gh issue list failed for label $label" >&2; rm -f "$raw"; return 1; }
   done
 
@@ -131,9 +134,8 @@ ts_is_eligible() {
 ts_discovered_count() {
   local out err; err="$(mktemp)"
   ts_gh_resolve_repo "$1" || { rm -f "$err"; echo 0; return 1; }
-  if out="$(gh issue list --repo "$TS_GITHUB_REPO" --state open --label "$(ts_gh_label discovered nl:discovered)" \
-    --limit 200 --json number --jq length 2>"$err")"; then
-    rm -f "$err"; echo "$out"; return 0
+  if out="$(ghr_issue_list "$TS_GITHUB_REPO" --state open --label "$(ts_gh_label discovered nl:discovered)" 2>"$err")"; then
+    rm -f "$err"; jq length <<< "$out"; return 0
   fi
   ts_gh_explain "gh issue list failed for the discovered label" "$(cat "$err")"
   rm -f "$err"; echo 0; return 1
@@ -188,9 +190,9 @@ ts_find_related() {
     | sed -E 's/(^| )-+/\1/g; s/^ +//; s/ +$//')"
   [[ -z "$query" ]] && return 0
   ts_gh_resolve_repo "$repo_path" || return 1
-  gh issue list --repo "$TS_GITHUB_REPO" --state all --search "$query" --limit 30 \
-    --json number,title,state \
-    --jq '.[] | "\(.state | ascii_downcase)\t#\(.number)\t\(.title)"'
+  local out
+  out="$(ghr_issue_search "$TS_GITHUB_REPO" "$query" --state all --limit 30)" || return 1
+  jq -r '.[] | "\(.state | ascii_downcase)\t#\(.number)\t\(.title)"' <<< "$out"
 }
 
 # Prints "<number> <state>" for the milestone titled $1 (any state), or nothing.
@@ -254,8 +256,7 @@ ts_stack_notes_export() {
   ts_gh_resolve_repo "$repo_path" || return 1
   mkdir -p "$dir"
   local raw
-  raw="$(gh issue list --repo "$TS_GITHUB_REPO" --state all --label "$(ts_gh_label stackNotes nl:stack-notes)" --limit 200 \
-    --json number,title,comments)" || return 1
+  raw="$(ghr_issue_list "$TS_GITHUB_REPO" --state all --label "$(ts_gh_label stackNotes nl:stack-notes)" --comments)" || return 1
   local stack
   while IFS= read -r stack; do
     stack="${stack%$'\r'}"
@@ -294,11 +295,12 @@ ts_stats_counts() {
   blocked_label="$(ts_gh_label blocked nl:blocked)"
   local closed="" label raw
   for label in "$(ts_gh_label agentReady nl:agent-ready)" "$(ts_gh_label verify nl:verify)" "$(ts_gh_label research nl:research)" "$overnight_label"; do
-    raw="$(gh issue list --repo "$TS_GITHUB_REPO" --state closed --label "$label" --limit 10000 --json number,labels)" || return 1
+    raw="$(ghr_issue_list "$TS_GITHUB_REPO" --state closed --label "$label")" || return 1
     closed="$closed$raw"
   done
   local blocked
-  blocked="$(gh issue list --repo "$TS_GITHUB_REPO" --state open --label "$blocked_label" --limit 10000 --json number --jq length)" || return 1
+  blocked="$(ghr_issue_list "$TS_GITHUB_REPO" --state open --label "$blocked_label")" || return 1
+  blocked="$(jq length <<< "$blocked")"
   jq -rs --arg o "$overnight_label" --argjson b "$blocked" '
     (add // []) | unique_by(.number) as $all
     | ($all | map(select([.labels[].name] | index($o))) | length) as $ov
