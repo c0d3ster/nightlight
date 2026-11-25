@@ -4,7 +4,11 @@ description: Mines a target repo's own memory (and, with --scan, its docs and RE
 disable-model-invocation: true
 ---
 
-A target repo is attached via --add-dir. Two independent sourcing phases: memory-mining (always runs) and repo-scanning (only with `--scan`).
+## Target repo
+
+`<nl>` below is the nightlight checkout holding this skill (the repo root above its `.claude/skills/`), as an absolute path. The target repo is the --add-dir repo if one is attached; otherwise the repo the args name (a sibling checkout's name, or a path); otherwise list the git checkouts beside `<nl>` and ask me to pick (one or more; each counts as attached below). Resolve it to an absolute path. Run scripts from `<nl>` by absolute path, never relative to the cwd (in a cloud session the cwd is the parent of every checkout). GitHub calls go through REST, `bash <nl>/lib/gh-rest.sh <command>` (commands and flags in its header; `<owner/repo>` from `bash <nl>/lib/gh-rest.sh repo <repo-path>`), because `gh issue`, `gh pr`, `gh label` and `gh repo` fail in cloud sessions. A branch delete can be refused there too: `pr-merge --delete-branch` then warns, and you say so in the summary and carry on.
+
+Two independent sourcing phases: memory-mining (always runs) and repo-scanning (only with `--scan`).
 
 ## Multi-repo mode
 
@@ -18,14 +22,14 @@ Determine this from the attached directory's structure, never by assumption: doe
 
 ## Task source mode
 
-Per repo (in multi-repo mode, each subdirectory), read `taskSource` from its `docs/nightlight-meta.json` (missing file or field = `local`). Run `source lib/task-source.sh && load_task_source <repo>` from the nightlight checkout (it sets `TASK_SOURCE` and loads the `ts_*` functions); a load error means skip that repo and say why.
+Per repo (in multi-repo mode, each subdirectory), read `taskSource` from its `docs/nightlight-meta.json` (missing file or field = `local`). Run `source <nl>/lib/task-source.sh && load_task_source <repo>` (it sets `TASK_SOURCE` and loads the `ts_*` functions); a load error means skip that repo and say why.
 
 - `local`: Phases 1-4 apply exactly as written.
 - `github` (remote): never edit TASKS.md, delete nothing from TASKS.md, and open no chore PR for this repo. Deltas:
   - Phase 2 step 2: dedupe through the Dedupe section below instead of TASKS.md and `docs/tasks-archive/`.
-  - Phase 3: after approval, run `bash lib/ensure-labels.sh <target-repo-path>` (creates any missing `nl:*` labels, safe to repeat; `gh` rejects labels that don't exist), then for each approved candidate run `gh issue create --repo <github.repo or origin> --title "<task text>" --body "<rationale, source>" --label nl:discovered` (label name from the repo's `labels.discovered` if set). Memory-sourced items still get their source memory file and MEMORY.md line deleted (step 3), but that is a local memory edit, not a commit. Announce "Done - N issue(s) created, N memory file(s) cleared."
+  - Phase 3: after approval, run `bash <nl>/lib/ensure-labels.sh <target-repo-path>` (creates any missing `nl:*` labels, safe to repeat; GitHub rejects labels that don't exist), then for each approved candidate run `bash <nl>/lib/gh-rest.sh issue-create <github.repo or origin> --title "<task text>" --body "<rationale, source>" --label nl:discovered` (label name from the repo's `labels.discovered` if set). Memory-sourced items still get their source memory file and MEMORY.md line deleted (step 3), but that is a local memory edit, not a commit. Announce "Done - N issue(s) created, N memory file(s) cleared."
   - Phase 4: skipped entirely. Report the created issue URLs instead.
-- `linear` (remote): same deltas as `github`, but the tracker is the repo's Linear team (`linear.teamId`) and every write goes through the Linear MCP tools, never `gh issue` or `gh label`:
+- `linear` (remote): same deltas as `github`, but the tracker is the repo's Linear team (`linear.teamId`) and every write goes through the Linear MCP tools, never `gh-rest.sh` issue or label commands:
   - Phase 2 step 2: dedupe through the Dedupe section below. "Reopen" is `save_issue` to an unstarted status (`list_issue_statuses`), "link as follow-up" is `save_comment` on the related issue.
   - Phase 3: after approval, create `nl:discovered` if the team lacks it (`list_issue_labels`, then `create_issue_label`), then `save_issue` to create one issue per approved candidate with the task text as the title, the rationale and source as the description, and the `nl:discovered` label (name from `labels.discovered` if set). Memory-sourced items still get their source memory file and MEMORY.md line deleted (step 3). Announce "Done - N issue(s) created, N memory file(s) cleared."
   - Phase 4: skipped entirely. Report the created issue URLs instead.
@@ -39,7 +43,7 @@ Announce each phase to me in one line before starting it.
 ## Phase 1: locate memory
 
 1. Announce: "Scanning `<repo>`'s memory for task candidates."
-2. Determine self-targeting by comparing paths, never by assumption: get the target repo's absolute path (from --add-dir) and this session's own primary working directory (from environment info). Self-targeting applies ONLY if these two paths are the same directory — i.e. nightlight is discovering on itself. State the comparison result explicitly before proceeding (e.g. "target repo == primary dir, this is self-targeting" or "target repo != primary dir, treating as a separate repo").
+2. Determine self-targeting by comparing paths, never by assumption: get the target repo's absolute path (see Target repo) and this session's own primary working directory (from environment info). Self-targeting applies ONLY if these two paths are the same directory — i.e. nightlight is discovering on itself. State the comparison result explicitly before proceeding (e.g. "target repo == primary dir, this is self-targeting" or "target repo != primary dir, treating as a separate repo").
 3. Self-targeting confirmed: the target repo's memory is just this session's own memory, already loaded — use its MEMORY.md directly, skip step 4.
 4. Not self-targeting: find the entry in `~/.claude/projects/` whose name matches the target repo's absolute path (`:` and path separators → `-`) — that's its own memory folder, distinct from nightlight's since memory is scoped to the session's primary directory, not add-dir targets. Confirm against the real listing rather than assuming the encoding.
 5. No matching folder, or no MEMORY.md: say so plainly, skip to Phase 2 step 3 (repo-scan), or exit if `--scan` wasn't passed either.
@@ -69,9 +73,9 @@ Uncommitted content in the target repo's working tree is dangerous — lost work
 4. Matches: pull latest, branch off it as `chore/tasks-discover-<YYYY-MM-DD>` (append `-2`, `-3`... if taken locally or on the remote).
 5. Stage only what this phase touched — TASKS.md and any memory files deleted in step 3. Never `git add -A`; the working tree may hold unrelated uncommitted work that isn't yours to commit.
 6. Commit as `chore(tasks): discover N candidate task(s)`, body listing each item and its memory source.
-7. Push, open a PR (`gh pr create`) targeting the default branch — title matches the commit, body summarizes the additions.
+7. Push, open a PR (`bash <nl>/lib/gh-rest.sh pr-create <owner/repo> --head <branch> --base <default> --title "<title>" --body-file <file>`) targeting the default branch — title matches the commit, body summarizes the additions.
 8. Report the PR URL.
-9. Merge it: `gh pr merge <branch-name> --rebase --delete-branch`, using the exact branch name from step 4 (not a PR number — that's what the scoped `chore/tasks-discover-*` merge permission matches against). This is safe specifically because every item going in was already explicitly approved by me in Phase 2 step 4 — the merge completes something already signed off on, it doesn't approve anything new.
+9. Merge it: `bash <nl>/lib/gh-rest.sh pr-merge <owner/repo> <branch-name> --delete-branch <repo>` (a rebase merge), using the exact branch name from step 4 (not a PR number — that's what the scoped `chore/tasks-discover-*` merge permission matches against). This is safe specifically because every item going in was already explicitly approved by me in Phase 2 step 4 — the merge completes something already signed off on, it doesn't approve anything new.
 10. Merge command fails (e.g. branch protection requires a review)? Report the failure plainly and leave the PR open. Don't retry, don't force, don't fall back to raw `git merge` — that stays denied regardless.
 11. Merge succeeds: `git -C <repo> checkout` the default branch and pull latest, so the working tree's TASKS.md reflects the merge before this session ends — that's what lets a later `/plan-tasks` or `overnight.sh` run see these additions without anyone merging by hand.
 
