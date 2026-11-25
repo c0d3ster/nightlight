@@ -64,6 +64,8 @@ With no repo, `discover.sh`, `plan.sh`, and `overnight.sh` cover every qualifyin
 
 `discover` and `plan` are interactive: a normal session with the slash command pre-submitted, and nothing is written until you approve. Both open a PR and merge it once you've approved the content in that session (see Safety model). `nightlight.sh` adds one thing, a `[y/N]` pause before the overnight step, since that is the only unattended, costly part. Its flags go to whichever phase understands them, and overnight flags pass through unvalidated.
 
+The skills also run in a Claude Code cloud session (claude.ai/code), where every repo, nightlight included, is a sibling checkout and there is no `--add-dir`: name the target repo in the args (`/plan-tasks Fractaleyez`), or the skill lists the checkouts and asks. Cloud sessions block gh's GraphQL commands (`gh issue`, `gh pr`, `gh label`, `gh repo view`), so the skills and `lib/` call GitHub through REST wrappers in `lib/gh-rest.sh`, which also work locally. Deleting a branch on origin is refused there, so a merge or stack-notes sweep reports the branch it couldn't delete and carries on.
+
 ### Running overnight
 
 Run it in `tmux` or a window you can leave open, and disable sleep. **Ctrl+C** stops the wrapper and kills leftover `claude -p` processes for that repo. Closing the window on Windows does not, so the next run refuses to start while a lock or leftover process exists; pass `--force` to take over. Run one repo at a time per machine (shared usage pool), chaining if needed: `./overnight.sh repo-a && ./overnight.sh repo-b`.
@@ -181,7 +183,7 @@ One-time setup:
 
 **Why reads use GraphQL and writes use MCP.** The dispatcher is plain bash, which can't call MCP tools, and listing through a model would cost tokens on every eligibility check. Writes go through MCP because the API key then lives only in bash and never reaches the model or an injected issue body. Permissions also work per operation (allow `save_comment`, deny `delete_comment`), whereas allowing the GraphQL endpoint allows everything. The cost is two credentials and an OAuth session that must stay logged in unattended (seven headless launches kept theirs, see `docs/research/linear-mcp.md`). If OAuth proves flaky, the fallback is a thin wrapper script with fixed operations.
 
-Both modes use an explicit tool allowlist in `.claude/settings.json` (specific `gh issue`/`gh label` commands, specific `mcp__linear__` tools, delete operations denied, no blanket `gh` or MCP allow).
+Both modes use an explicit tool allowlist in `.claude/settings.json` (specific `gh issue`/`gh label` commands and `lib/gh-rest.sh` commands, specific `mcp__linear__` tools, delete operations denied, no blanket `gh` or MCP allow).
 
 ## What you get in the morning
 
