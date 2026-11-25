@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
-# Shared task-source loader, sourced by overnight.sh and plan.sh (cwd must be the nightlight checkout).
-source lib/env.sh
+# Shared task-source loader, sourced by overnight.sh, plan.sh and the skills.
+# Modules load from this file's own directory, so any cwd works.
+NL_LIB="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "$NL_LIB/env.sh"
 
 # Reads taskSource and its config blocks from $1 (repo path)'s
 # docs/nightlight-meta.json, then sources lib/task-source-<name>.sh. Missing
@@ -57,7 +59,7 @@ load_task_source() {
       ;;
     *) echo "error: unknown taskSource \"$TASK_SOURCE\" in $meta (expected local, github, or linear)"; return 1 ;;
   esac
-  local module="lib/task-source-$TASK_SOURCE.sh"
+  local module="$NL_LIB/task-source-$TASK_SOURCE.sh"
   [[ -f "$module" ]] || { echo "error: taskSource \"$TASK_SOURCE\" is not implemented yet ($module missing)"; return 1; }
   source "$module"
 }
