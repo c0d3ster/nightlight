@@ -579,7 +579,7 @@ $task_text
 
 This is run $run of today, dispatch position $position in it, so name your branch overnight/<YYYY-MM-DD>/r$run-$position-$(task_branch_token)$num-<task-slug> (position zero-padded to 2 digits, e.g. 01), per CLAUDE.md.
 
-$(gh_prompt_prs) Open your PR, after pushing the branch, with $(gh_prompt_pr_create "" "$base_branch") (the body file holds the PR description). Where CLAUDE.md names a \`gh pr\` command, use these instead."
+$(gh_prompt_prs) Open your PR, after pushing the branch, with $(gh_prompt_pr_create "" "$base_branch") (the body file holds the PR description)."
 
   if [[ "$stack" == "solo" ]]; then
     p="$p
@@ -682,7 +682,7 @@ $skipped_summary"
 
   p="$p
 
-$(gh_prompt_prs) Where CLAUDE.md names a \`gh pr\` command, use these instead.
+$(gh_prompt_prs)
 
 Treat the TASK_RESULT lines above as a starting point, not ground truth -- a task session can misreport, so confirm each PR/branch's actual state with git and the commands above before writing anything. Then follow the \"TASKS.md maintenance\" rules in CLAUDE.md exactly: check off or annotate each attempted task (NEEDS HUMAN / blocked as reported, with the note given), archive completed tasks to a new docs/tasks-archive/<date>.md, update tasksCompleted/tasksBlocked in docs/nightlight-meta.json, and open the housekeeping PR targeting main with $(gh_prompt_pr_create "overnight/<YYYY-MM-DD>/r$run-housekeeping" main).
 
