@@ -2,6 +2,12 @@
 name: migrate-tasks
 description: Moves a target repo's open TASKS.md items, including Decisions (`nl:decision`) and Discovered (`nl:discovered`), into GitHub issues or Linear issues (`--to github` or `--to linear`, local to remote only), archives its checked-off items, removes TASKS.md when nothing remains, then flips taskSource. In GitHub mode it also reviews unlabeled existing issues for staleness (shared with `/tidy-issues`, `pnpm tidy`). Every create, close, and relabel needs per-item approval.
 disable-model-invocation: true
+hooks:
+  PreToolUse:
+    - matcher: "Bash|Read|mcp__.*"
+      hooks:
+        - type: command
+          command: 'f="$(cd -P "$CLAUDE_PLUGIN_ROOT" 2>/dev/null && cd ../../.. && pwd)/lib/guard.sh"; [ -f "$f" ] || { echo "nightlight guard not found from $CLAUDE_PLUGIN_ROOT; re-run install.sh" >&2; exit 2; }; exec bash "$f"'
 ---
 
 ## Target repo

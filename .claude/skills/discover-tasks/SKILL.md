@@ -2,6 +2,12 @@
 name: discover-tasks
 description: Mines a target repo's own memory (and, with --scan, its docs and README) for task candidates and proposes additions to its TASKS.md § Discovered. Run before /plan-tasks when task ideas have accumulated from direct work sessions in the target repo.
 disable-model-invocation: true
+hooks:
+  PreToolUse:
+    - matcher: "Bash|Read|mcp__.*"
+      hooks:
+        - type: command
+          command: 'f="$(cd -P "$CLAUDE_PLUGIN_ROOT" 2>/dev/null && cd ../../.. && pwd)/lib/guard.sh"; [ -f "$f" ] || { echo "nightlight guard not found from $CLAUDE_PLUGIN_ROOT; re-run install.sh" >&2; exit 2; }; exec bash "$f"'
 ---
 
 ## Target repo

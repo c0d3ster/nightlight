@@ -2,6 +2,12 @@
 name: tidy-issues
 description: Reviews a repo's open, unlabeled GitHub issues against its code and merged PRs, then links and closes the ones that shipped or went stale, and (only when labels are on) labels the rest into nl:* sections. Works whatever the repo's task source. Every comment, close, and label needs per-item approval.
 disable-model-invocation: true
+hooks:
+  PreToolUse:
+    - matcher: "Bash|Read|mcp__.*"
+      hooks:
+        - type: command
+          command: 'f="$(cd -P "$CLAUDE_PLUGIN_ROOT" 2>/dev/null && cd ../../.. && pwd)/lib/guard.sh"; [ -f "$f" ] || { echo "nightlight guard not found from $CLAUDE_PLUGIN_ROOT; re-run install.sh" >&2; exit 2; }; exec bash "$f"'
 ---
 
 ## Target repo

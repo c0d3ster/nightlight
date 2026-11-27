@@ -2,6 +2,12 @@
 name: plan-tasks
 description: Plans and stack-annotates a target repo's TASKS.md. Use when starting a planning session to break down Agent-Ready tasks, assign [stack] annotations, and flag prerequisites before an overnight run.
 disable-model-invocation: true
+hooks:
+  PreToolUse:
+    - matcher: "Bash|Read|mcp__.*"
+      hooks:
+        - type: command
+          command: 'f="$(cd -P "$CLAUDE_PLUGIN_ROOT" 2>/dev/null && cd ../../.. && pwd)/lib/guard.sh"; [ -f "$f" ] || { echo "nightlight guard not found from $CLAUDE_PLUGIN_ROOT; re-run install.sh" >&2; exit 2; }; exec bash "$f"'
 ---
 
 ## Target repo
