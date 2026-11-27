@@ -10,6 +10,7 @@
     "tidy": "bash tidy.sh",
     "overnight": "bash overnight.sh",
     "stats": "bash stats.sh",
-    "install-skills": "bash install.sh"
+    "install-skills": "bash install.sh",
+    "test": "bash test/run.sh"
   }
 }

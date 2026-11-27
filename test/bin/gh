@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# gh stub for the tests: serves `gh api` from fixtures, never the network.
+# Routes live in $GH_STUB_DIR/routes, one per line: "<METHOD> <endpoint>\t<action>"
+# where <action> is one or more fixture files (pages, served in order with
+# --paginate) or "!<exit> <stderr text>" (a failure; stdout gets the text after
+# a "|", if any). Every call is logged to $GH_STUB_DIR/calls. A write with no
+# route succeeds with "{}"; a read with no route fails like a 404.
+set -u
+[[ "${1:-}" == api ]] || { echo "gh stub: only 'gh api' is supported, got: $*" >&2; exit 64; }
+shift
+printf '%s\n' "$*" >> "$GH_STUB_DIR/calls"
+method="" endpoint="" jqf="" paginate=0
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -X|--method) method="$2"; shift 2 ;;
+    --jq|-q) jqf="$2"; shift 2 ;;
+    --paginate) paginate=1; shift ;;
+    -f|-F|--raw-field|--field|-H|--header|--input) shift 2 ;;
+    -*) shift ;;
+    *) [[ -z "$endpoint" ]] && endpoint="$1"; shift ;;
+  esac
+done
+method="${method:-GET}"
+action="$(awk -F'\t' -v k="$method $endpoint" '$1 == k {print $2; exit}' "$GH_STUB_DIR/routes" 2>/dev/null)"
+if [[ -z "$action" ]]; then
+  [[ "$method" != GET ]] && { echo '{}'; exit 0; }
+  echo "gh: Not Found (HTTP 404) [stub: no route for $method $endpoint]" >&2; exit 1
+fi
+if [[ "$action" == '!'* ]]; then
+  action="${action#!}"; code="${action%% *}"; msg="${action#* }"
+  [[ "$msg" == *'|'* ]] && { printf '%s\n' "${msg#*|}"; msg="${msg%%|*}"; }
+  echo "$msg" >&2; exit "$code"
+fi
+for page in $action; do
+  [[ "$page" == /* ]] || page="$GH_STUB_FIXTURES/$page"
+  if [[ -n "$jqf" ]]; then jq -r "$jqf" "$page" || exit 1; else cat "$page"; fi
+  [[ "$paginate" == 1 ]] || break
+done
