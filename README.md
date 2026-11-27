@@ -20,7 +20,7 @@ This repo holds the runner and its config, nothing else. No dependencies, no das
 
 - Bash 4.3+ (namerefs and associative arrays). macOS ships 3.2, so `brew install bash` and put it first on `PATH`.
 - [Claude Code](https://docs.claude.com/en/docs/claude-code) CLI, logged in.
-- Git and the GitHub CLI (`gh`), authenticated for the target repo.
+- Git and the GitHub CLI (`gh`), authenticated for the target repo (`gh auth login`). Every GitHub call is REST through `gh api`, so it works where GraphQL is blocked (Claude Code cloud sessions).
 - [`jq`](https://jqlang.org/download) for the live session output.
 - [pnpm](https://pnpm.io), optional. It is only a script alias runner here (see Commands), nothing to install.
 - A target repo with a task list (see below) and a `CLAUDE.md` with its test command and conventions.
@@ -50,6 +50,8 @@ Every script has a `pnpm` alias with the same args (no `--` separator needed). P
 | `./migrate.sh <repo> --to github\|linear` | `pnpm migrate` | move `TASKS.md` into issues, or adopt a repo's existing issues (no `TASKS.md`) |
 | `./tidy.sh <repo> [--labels \| --no-labels]` | `pnpm tidy` | review and close stale GitHub issues; `--labels` labels the rest per item |
 | `./stats.sh [repo]` | `pnpm stats` | print cost and time totals |
+| `./install.sh [--unlink]` | `pnpm install-skills` | link the skills and agents into `~/.claude` (see Skills) |
+| `bash test/run.sh` | `pnpm test` | run the test suite (plain bash, a `gh` stub, no network) |
 
 With no repo, `discover.sh`, `plan.sh`, and `overnight.sh` cover every qualifying repo under `PROJECT_REPOS_DIR`. A bare repo name resolves against `PROJECT_REPOS_DIR`; a full path also works.
 
@@ -64,7 +66,7 @@ With no repo, `discover.sh`, `plan.sh`, and `overnight.sh` cover every qualifyin
 
 `discover` and `plan` are interactive: a normal session with the slash command pre-submitted, and nothing is written until you approve. Both open a PR and merge it once you've approved the content in that session (see Safety model). `nightlight.sh` adds one thing, a `[y/N]` pause before the overnight step, since that is the only unattended, costly part. Its flags go to whichever phase understands them, and overnight flags pass through unvalidated.
 
-The skills also run in a Claude Code cloud session (claude.ai/code), where every repo, nightlight included, is a sibling checkout and there is no `--add-dir`: name the target repo in the args (`/plan-tasks Fractaleyez`), or the skill lists the checkouts and asks. Cloud sessions block gh's GraphQL commands (`gh issue`, `gh pr`, `gh label`, `gh repo view`), so the skills and `lib/` call GitHub through REST wrappers in `lib/gh-rest.sh`, which also work locally. Deleting a branch on origin is refused there, so a merge or stack-notes sweep reports the branch it couldn't delete and carries on.
+The skills also run in a Claude Code cloud session (claude.ai/code), where every repo, nightlight included, is a sibling checkout and there is no `--add-dir`: name the target repo in the args (`/plan-tasks Fractaleyez`), or the skill lists the checkouts and asks. Cloud sessions block gh's GraphQL commands (`gh issue`, `gh pr`, `gh label`, `gh repo view`), so nightlight never uses them: the scripts, the skills and the prompts given to overnight sessions call `gh api` REST, which works locally too. Deleting a branch on origin is refused there, so a merge or stack-notes sweep reports the branch it couldn't delete and carries on.
 
 ### Running overnight
 
@@ -85,7 +87,7 @@ Flags scope a run without editing any files. They append to the base prompt, so 
 - `--stop-after`, `--stack`, `--extra-instructions`, and `--override-prompt` need a single repo. `--limit` and `--force` apply per repo in no-arg mode.
 - `--override-prompt "<text>"` skips the dispatch loop and runs one bare session: no task selection, stack notes, or housekeeping. Prefer the flags above.
 
-Live output is formatted by `format-stream.jq`. You get a `=== session started ===` / `=== session done ===` pair per task, and a `gh pr create` call means that task is finished. Logs land in `logs/<repo>/<date>/` (gitignored), named like the branches: `r<R>-<PP>-t<NN>-<slug>.{jsonl,log,stderr.log}`, the same set for housekeeping and override runs, plus `r<R>-run.log` combining everything.
+Live output is formatted by `format-stream.jq`. You get a `=== session started ===` / `=== session done ===` pair per task, and a `gh api -X POST .../pulls` call means that task opened its PR. Logs land in `logs/<repo>/<date>/` (gitignored), named like the branches: `r<R>-<PP>-t<NN>-<slug>.{jsonl,log,stderr.log}`, the same set for housekeeping and override runs, plus `r<R>-run.log` combining everything.
 
 ### Behavior notes
 
@@ -103,6 +105,10 @@ After every dispatched subprocess, its `result` event (cost, duration, turns, to
 ## Skills
 
 `/plan-tasks` does the breakdown that makes the overnight run work: `#<n>` numbering, `[stack: <name>]` assignment (biased toward stacking, since a false `solo` risks conflicting PRs), and acceptance criteria. `/discover-tasks` mines a repo's memory and, with `--scan`, its codebase for candidates. Both investigate in parallel, then ask for approval before writing anything, and both only touch the task list and `docs/nightlight-meta.json`. Their behavior lives in `.claude/skills/<name>/SKILL.md`.
+
+To run the skills from inside any repo (no `--add-dir`, the repo you're in is the target), link them into your user config with `bash install.sh` (`pnpm install-skills`). It symlinks each skill into `~/.claude/skills/` and each agent they dispatch into `~/.claude/agents/`, so `git pull` here updates them. Safe to repeat; an existing entry that isn't an earlier link or copy of the same skill is skipped, never removed. `bash install.sh --unlink` removes only the links into this checkout. This is a stopgap until nightlight ships as a plugin, which will replace it.
+
+> **Git Bash on Windows:** Enable Developer Mode (Settings > System > For developers > Developer Mode). Git Bash also needs `MSYS=winsymlinks:nativestrict` for `ln -s` to create real symlinks instead of copying directories; `install.sh` sets this automatically, and fails with a message if it still gets a copy. If you previously got copies, `install.sh` replaces copies of the same skill on the next run; to clear them by hand, `rm -rf ~/.claude/skills/{discover-tasks,migrate-tasks,plan-tasks,tidy-issues} ~/.claude/agents/{task-scout,task-investigator}.md`, then re-run `bash install.sh`.
 
 ## Task sources
 
@@ -175,7 +181,7 @@ An open issue with a section label is a task, and the issue number is the task i
 
 One-time setup:
 
-1. **`gh` auth.** Still required for task PRs and merge-state checks. Run `gh auth login`.
+1. **`gh` auth.** Still required for task PRs and merge-state checks (REST, `gh api`). Run `gh auth login`.
 2. **API key.** Put `LINEAR_API_KEY=...` in an env file. The target repo's env files are checked first, then nightlight's. Gitignored files go before the rest, in the order `.env.local`, `.env.*.local`, `.env.*`, `.env`. Templates (`.example`, `.sample`, `.template`, `.dist`) are skipped. The first match wins, only that line is read, and a warning prints if the file is tracked or not ignored.
 3. **MCP server.** `claude mcp add --scope user --transport http linear https://mcp.linear.app/mcp`, then authenticate via `/mcp`. Confirm with `claude mcp get linear`.
 
@@ -183,7 +189,7 @@ One-time setup:
 
 **Why reads use GraphQL and writes use MCP.** The dispatcher is plain bash, which can't call MCP tools, and listing through a model would cost tokens on every eligibility check. Writes go through MCP because the API key then lives only in bash and never reaches the model or an injected issue body. Permissions also work per operation (allow `save_comment`, deny `delete_comment`), whereas allowing the GraphQL endpoint allows everything. The cost is two credentials and an OAuth session that must stay logged in unattended (seven headless launches kept theirs, see `docs/research/linear-mcp.md`). If OAuth proves flaky, the fallback is a thin wrapper script with fixed operations.
 
-Both modes use an explicit tool allowlist in `.claude/settings.json` (specific `gh issue`/`gh label` commands and `lib/gh-rest.sh` commands, specific `mcp__linear__` tools, delete operations denied, no blanket `gh` or MCP allow).
+Both modes use an explicit tool allowlist in `.claude/settings.json` (`gh api` scoped to the issues, pulls, labels, milestones and search endpoints, with DELETE, merges, `contents` and `git` endpoints denied; specific `mcp__linear__` tools with their deletes denied; no blanket `gh` or MCP allow).
 
 ## What you get in the morning
 
@@ -200,7 +206,7 @@ No `--dangerously-skip-permissions`. `.claude/settings.json` is an explicit allo
 
 Known limits of the denylist. It matches command text, not intent, so it is a guardrail rather than a sandbox. Combined short flags such as `git commit -anm msg` are not caught, and neither are `git push --mirror` or `--all`. Because the rules are text matches, a commit message containing ` -c ` or ` -n` is also denied. Server-side protection (a branch protection rule on `main`) is the backstop that actually enforces "never push to main", so turn it on for any repo you point this at.
 
-**One narrow exception:** `/discover-tasks` and `/plan-tasks` Finalize merge their own PR (`gh pr merge --rebase --delete-branch`). Everything in it was already approved by you in that session, so the merge just completes it. The allowlist only permits `gh pr merge` on `chore/tasks-discover-*` and `chore/tasks-plan-*` branches, which never touch application code, and raw `git merge` stays denied everywhere. Overnight task and housekeeping PRs always wait for you.
+**One narrow exception:** `/discover-tasks` and `/plan-tasks` Finalize (and `/migrate-tasks`, on a separate yes) merge their own PR with `lib/merge-pr.sh` (a rebase merge by REST, then a best-effort branch delete). Everything in it was already approved by you in that session, so the merge just completes it. The script only merges `chore/tasks-discover-*`, `chore/tasks-plan-*` and `chore/tasks-migrate-*` branches, the allowlist only permits it for those, and a raw `gh api` merge is denied. These branches never touch application code, and raw `git merge` stays denied everywhere. Overnight task and housekeeping PRs always wait for you.
 
 ## Prior art
 
