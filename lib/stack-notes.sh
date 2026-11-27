@@ -14,7 +14,7 @@
 #
 # The one stack-notes sweep, shared by housekeeping (all three task sources) and
 # /migrate-tasks. For every docs/stack-notes/<stack>.md in the target repo:
-#   1. check each "Branch: " line's PR (REST, lib/gh-rest.sh); delete any branch
+#   1. check each "Branch: " line's PR (REST, lib/github.sh); delete any branch
 #      whose PR MERGED, locally and on origin (even when the file is kept). The
 #      origin delete is best-effort: cloud sessions refuse it, which prints
 #      "delete-failed <branch> (origin): <reason>" and changes nothing else
@@ -29,7 +29,7 @@
 # "finished", "removed-legacy" or "kept <reason>".
 
 set -u
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/gh-rest.sh"
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/github.sh"
 
 repo="${1:?usage: stack-notes.sh <repo-path> [--keep <stack>]...}"
 shift
@@ -47,7 +47,7 @@ notes_dir="$repo/docs/stack-notes"
 [[ -d "$notes_dir" || -n "$remote_dir" ]] || { echo "no docs/stack-notes in $repo, nothing to sweep"; exit 0; }
 # owner/name for the PR lookups; empty on failure, which makes every lookup fail
 # and so keeps every stack.
-slug="$(ghr_repo "$repo" 2>/dev/null)" || slug=""
+slug="$(gh_slug "$repo" 2>/dev/null)" || slug=""
 
 # Stacks with an open task in a local TASKS.md, under any unchecked glyph.
 if [[ -z "$remote_dir" && -f "$repo/TASKS.md" ]]; then
@@ -77,27 +77,33 @@ while IFS= read -r stack; do
   all_merged=1
   while IFS= read -r branch; do
     [[ "$branch" =~ ^[A-Za-z0-9._/-]+$ ]] || { echo "kept $stack: unsafe branch name '$branch'"; all_merged=0; continue; }
-    if ! pr="$(ghr_pr_view "$slug" "$branch" 2>/dev/null)" || ! state="$(jq -er .state <<< "$pr")"; then
-      # A discarded retry attempt leaves an entry whose branch is gone and never
-      # had a PR; it must not hold the stack open.
-      if ! git -C "$repo" show-ref --verify --quiet "refs/heads/$branch" \
-        && ! git -C "$repo" ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1 \
-        && [[ "$(ghr_pr_list "$slug" --head "$branch" --state all 2>/dev/null | jq length)" == "0" ]]; then
-        echo "ignored-stale $branch (no branch, no PR)"
-        continue
-      fi
+    if ! pr="$(gh_branch_pr "$slug" "$branch" 2>/dev/null)"; then
       echo "kept $stack: gh could not read the PR for $branch"
       all_merged=0
       continue
     fi
-    if [[ "$state" != "MERGED" ]]; then
+    if [[ "$pr" == null ]]; then
+      # A discarded retry attempt leaves an entry whose branch is gone and never
+      # had a PR; it must not hold the stack open.
+      if ! git -C "$repo" show-ref --verify --quiet "refs/heads/$branch" \
+        && ! git -C "$repo" ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
+        echo "ignored-stale $branch (no branch, no PR)"
+        continue
+      fi
+      echo "kept $stack: $branch has no PR"
+      all_merged=0
+      continue
+    fi
+    state="$(jq -r 'if .merged_at then "merged" else .state end' <<< "$pr")"
+    if [[ "$state" != merged ]]; then
       echo "kept $stack: $branch is $state"
       all_merged=0
       continue
     fi
     git -C "$repo" branch -D "$branch" >/dev/null 2>&1 && echo "deleted-branch $branch (local)"
     if git -C "$repo" ls-remote --exit-code --heads origin "$branch" >/dev/null 2>&1; then
-      if err="$(ghr_delete_branch "$slug" "$branch" "$repo" 2>&1)"; then
+      if err="$(gh_delete_branch "$repo" "$branch" 2>&1)"; then
+        [[ -n "$err" ]] && echo "$err"
         echo "deleted-branch $branch (origin)"
       else
         echo "delete-failed $branch (origin): ${err#warning: }"
