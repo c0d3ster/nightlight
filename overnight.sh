@@ -352,11 +352,11 @@ task_branch_token() {
 find_orphan_branches() {
   local repo_path="$1" num="$2"
   local re="^overnight/[0-9]{4}-[0-9]{2}-[0-9]{2}/r[0-9]+-[0-9]+-$(task_branch_token)$num-"
-  local b pr_count
+  local b pr
   while IFS= read -r b; do
     [[ "${b,,}" =~ ${re,,} ]] || continue
-    pr_count="$(cd "$repo_path" && gh pr list --head "$b" --state all --json number --jq length 2>/dev/null)" || continue
-    [[ "$pr_count" == "0" ]] && echo "$b"
+    pr="$(gh_branch_pr "$GH_REPO_SLUG" "$b" 2>/dev/null)" || continue
+    [[ "$pr" == null ]] && echo "$b"
   done < <(git -C "$repo_path" for-each-ref --format='%(refname:short)' refs/heads/overnight refs/remotes/origin/overnight | sed 's#^origin/##' | sort -u)
 }
 
@@ -364,26 +364,33 @@ find_orphan_branches() {
 # task whose PR already exists (open, merged, or closed unmerged) must not be
 # dispatched again. Prints "<state> #<pr>" for $2's PR (open or merged ones win
 # over closed), nothing if it has none. The match is case-insensitive because a
-# session may lowercase a Linear identifier in its branch name. One gh call per
-# run, cached in TASK_PR_CACHE; returns 1 if gh can't answer. Matches the
+# session may lowercase a Linear identifier in its branch name. Every PR is
+# listed once per run (REST, all pages), cached in TASK_PR_CACHE; returns 1 if
+# gh can't answer. Matches the
 # "-i<id>-" token, plus legacy "-t<id>-" PRs from before the rename. Non-numeric
 # ids (Linear) can't collide with old local-task numbers, so their legacy PRs
 # count in any state (a merged one must still stop a re-dispatch until
 # housekeeping closes the issue). Numeric ids (GitHub) count only an OPEN legacy
 # PR: merged or closed ones belong to old local-task numbers issues may reuse.
+# Callers run it inside $(...), where a cache set here would be lost, so
+# run_repo primes it once with load_task_prs; an empty cache (that load failed)
+# is retried per call.
 TASK_PR_CACHE=""
+load_task_prs() {
+  TASK_PR_CACHE="$(gh_paged "repos/$GH_REPO_SLUG/pulls?state=all&per_page=100" \
+    '{number, state, merged_at, head: {ref: .head.ref}}' 2>/dev/null)" \
+    || { TASK_PR_CACHE=""; return 1; }
+}
 find_task_pr() {
   local repo_path="$1" num="$2"
-  if [[ -z "$TASK_PR_CACHE" ]]; then
-    TASK_PR_CACHE="$(cd "$repo_path" && gh pr list --state all --limit 500 --json number,state,headRefName 2>/dev/null)" \
-      || { TASK_PR_CACHE=""; return 1; }
-  fi
+  [[ -n "$TASK_PR_CACHE" ]] || load_task_prs || return 1
   local pre="^overnight/[0-9]{4}-[0-9]{2}-[0-9]{2}/r[0-9]+-[0-9]+-"
   jq -r --arg re "${pre}i$num-" --arg legacy "${pre}t$num-" --argjson numeric "$([[ "$TS_NUMERIC_IDS" == 1 ]] && echo true || echo false)" '
-    [.[] | select((.headRefName | test($re; "i"))
-      or ((.state == "OPEN" or ($numeric | not)) and (.headRefName | test($legacy; "i"))))]
-    | (map(select(.state != "CLOSED")) + map(select(.state == "CLOSED"))) | first // empty
-    | "\(.state | ascii_downcase) #\(.number)"' <<< "$TASK_PR_CACHE"
+    [.[] | (if .merged_at then "merged" else .state end) as $st | . + {st: $st}
+      | select((.head.ref | test($re; "i"))
+        or (($st == "open" or ($numeric | not)) and (.head.ref | test($legacy; "i"))))]
+    | (map(select(.st != "closed")) + map(select(.st == "closed"))) | first // empty
+    | "\(.st) #\(.number)"' <<< "$TASK_PR_CACHE"
 }
 
 # Discards each orphaned branch (locally, and on origin if it was pushed) so
@@ -441,7 +448,7 @@ resolve_base_branch() {
       if git -C "$repo_path" show-ref --verify --quiet "refs/heads/$prior_branch" \
         || git -C "$repo_path" show-ref --verify --quiet "refs/remotes/origin/$prior_branch"; then
         local merged_at
-        merged_at="$(cd "$repo_path" && gh pr view "$prior_branch" --json state,mergedAt --jq 'select(.state == "MERGED") | .mergedAt' 2>/dev/null)"
+        merged_at="$(gh_branch_pr "$GH_REPO_SLUG" "$prior_branch" 2>/dev/null | jq -r '.merged_at // empty')"
         if [[ -n "$merged_at" ]]; then
           echo "warn: stack '$stack''s recorded branch '$prior_branch' already merged into main (PR merged $merged_at) -- re-rooting on '$default_branch' instead of chaining onto a dead-end branch" >&2
         else
@@ -481,8 +488,8 @@ stack_branch_is_live() {
   local repo_path="$1" b="$2" n
   git -C "$repo_path" show-ref --verify --quiet "refs/heads/$b" && return 0
   git -C "$repo_path" show-ref --verify --quiet "refs/remotes/origin/$b" && return 0
-  n="$(cd "$repo_path" && gh pr list --head "$b" --state all --json number --jq length 2>/dev/null)" || return 0
-  [[ "$n" != "0" ]]
+  n="$(gh_branch_pr "$GH_REPO_SLUG" "$b" 2>/dev/null)" || return 0
+  [[ "$n" != null ]]
 }
 
 # Filters stack notes (stdin) down to live entries: drops each "## " entry whose
@@ -540,6 +547,21 @@ stack_notes_load() {
   rm -rf "$dir"
 }
 
+# Prompt text with the exact REST commands for PR state ($GH_REPO_SLUG). Every
+# GitHub call a session makes is `gh api`: gh pr/issue/label/repo use GraphQL,
+# which cloud sessions block.
+gh_prompt_prs() {
+  local r="${GH_REPO_SLUG:-<owner>/<repo>}"
+  printf '%s' "GitHub calls go through REST with \`gh api\`, never \`gh pr\`, \`gh issue\`, \`gh label\` or \`gh repo\` (those need GraphQL). PRs live in $r. A branch's PRs: \`gh api 'repos/$r/pulls?state=all&head=${r%%/*}:<branch>' --jq '.[] | {number, state, merged_at}'\`. One PR: \`gh api repos/$r/pulls/<number> --jq '{state, merged_at, head: .head.ref}'\`. Every PR: \`gh api --paginate 'repos/$r/pulls?state=all&per_page=100' --jq '.[] | {number, state, merged_at, head: .head.ref}'\`. A PR is merged when merged_at is set (its state then reads closed)."
+}
+
+# Prompt text: the exact command to open a PR from branch $1 (a placeholder
+# when empty) into $2.
+gh_prompt_pr_create() {
+  local r="${GH_REPO_SLUG:-<owner>/<repo>}"
+  printf '%s' "\`gh api -X POST repos/$r/pulls -f head=${1:-<branch>} -f base=$2 -f title='<title>' -F body=@<file> --jq .html_url\`"
+}
+
 # Builds the prompt for a single task's fresh subprocess: the task text
 # verbatim, stack/stack-notes context (or the solo/no-stack-notes rule), any
 # --extra-instructions, and the TASK_RESULT contract housekeeping consumes.
@@ -555,7 +577,9 @@ Here is the task, verbatim from TASKS.md:
 
 $task_text
 
-This is run $run of today, dispatch position $position in it, so name your branch overnight/<YYYY-MM-DD>/r$run-$position-$(task_branch_token)$num-<task-slug> (position zero-padded to 2 digits, e.g. 01), per CLAUDE.md."
+This is run $run of today, dispatch position $position in it, so name your branch overnight/<YYYY-MM-DD>/r$run-$position-$(task_branch_token)$num-<task-slug> (position zero-padded to 2 digits, e.g. 01), per CLAUDE.md.
+
+$(gh_prompt_prs) Open your PR, after pushing the branch, with $(gh_prompt_pr_create "" "$base_branch") (the body file holds the PR description). Where CLAUDE.md names a \`gh pr\` command, use these instead."
 
   if [[ "$stack" == "solo" ]]; then
     p="$p
@@ -592,11 +616,9 @@ This task starts stack \"$stack\". Branch from the repo's default branch (curren
   fi
 
   if [[ "$TASK_SOURCE" == "github" ]]; then
-    local repo_flag=""
-    [[ -n "$TS_GITHUB_REPO" ]] && repo_flag=" --repo $TS_GITHUB_REPO"
     p="$p
 
-This task is GitHub issue \`#$num\`; the text above is a synthesized snapshot. Read full detail and comments with \`gh issue view $num --comments$repo_flag\`. Reference the issue as \`#$num\` in backticks in the PR body, never use \`Closes #$num\` or any other closing keyword (closing is housekeeping's job), and never set status labels (nl:blocked, nl:needs-human) yourself; report status via TASK_RESULT only."
+This task is GitHub issue \`#$num\`; the text above is a synthesized snapshot. Read full detail with \`gh api repos/$TS_GITHUB_REPO/issues/$num --jq '{title, body, labels: [.labels[].name]}'\` and its comments with \`gh api 'repos/$TS_GITHUB_REPO/issues/$num/comments?per_page=100' --jq '.[] | {user: .user.login, author_association, body}'\`. Reference the issue as \`#$num\` in backticks in the PR body, never use \`Closes #$num\` or any other closing keyword (closing is housekeeping's job), and never set status labels (nl:blocked, nl:needs-human) yourself; report status via TASK_RESULT only."
   fi
 
   if [[ "$TASK_SOURCE" == "linear" ]]; then
@@ -660,15 +682,17 @@ $skipped_summary"
 
   p="$p
 
-Treat the TASK_RESULT lines above as a starting point, not ground truth -- a task session can misreport, so confirm each PR/branch's actual state with git/gh before writing anything (e.g. gh pr view <pr> --json state,mergedAt, or gh pr list --head <branch>). Then follow the \"TASKS.md maintenance\" rules in CLAUDE.md exactly: check off or annotate each attempted task (NEEDS HUMAN / blocked as reported, with the note given), archive completed tasks to a new docs/tasks-archive/<date>.md, update tasksCompleted/tasksBlocked in docs/nightlight-meta.json, and open the housekeeping PR targeting main.
+$(gh_prompt_prs) Where CLAUDE.md names a \`gh pr\` command, use these instead.
+
+Treat the TASK_RESULT lines above as a starting point, not ground truth -- a task session can misreport, so confirm each PR/branch's actual state with git and the commands above before writing anything. Then follow the \"TASKS.md maintenance\" rules in CLAUDE.md exactly: check off or annotate each attempted task (NEEDS HUMAN / blocked as reported, with the note given), archive completed tasks to a new docs/tasks-archive/<date>.md, update tasksCompleted/tasksBlocked in docs/nightlight-meta.json, and open the housekeeping PR targeting main with $(gh_prompt_pr_create "overnight/<YYYY-MM-DD>/r$run-housekeeping" main).
 
 Before opening that PR, also run the stack-notes sweep, one deterministic script: bash lib/stack-notes.sh <target-repo-path>$keep_args (run it from this repo, nightlight; the target repo is the --add-dir). It deletes merged stack branches locally and on origin and git rms each finished stack's docs/stack-notes/<stack>.md, staged but not committed, so include those removals in the housekeeping commit and list them in the PR body. It reads TASKS.md itself for stacks with open tasks. Do not re-implement or second-guess its checks; report what it prints.
 
 Also check every [/] (NEEDS HUMAN) line already in TASKS.md, not just ones reported this run -- per CLAUDE.md, check each one's PR merge state and archive+remove any that have since merged.
 
-Also sweep every [!] (blocked) line in TASKS.md whose annotation blocks on a dependency (another task or a PR), not just ones reported this run -- per CLAUDE.md, check each referenced PR's merge state; if every dependency has merged, set the line back to [ ] and remove the BLOCKED annotation. Leave [!] lines blocked for any other reason, or whose gh check fails, exactly as they are.
+Also sweep every [!] (blocked) line in TASKS.md whose annotation blocks on a dependency (another task or a PR), not just ones reported this run -- per CLAUDE.md, check each referenced PR's merge state; if every dependency has merged, set the line back to [ ] and remove the BLOCKED annotation. Leave [!] lines blocked for any other reason, or whose PR check fails, exactly as they are.
 
-Likewise sweep every [x] (checked off) line in TASKS.md, not just ones reported this run -- a task checked off by hand is complete but would otherwise sit in TASKS.md forever. Confirm each one's PR state with gh, then archive+remove it and count it in tasksCompleted (a [x] whose PR has not merged goes back to [/] instead)."
+Likewise sweep every [x] (checked off) line in TASKS.md, not just ones reported this run -- a task checked off by hand is complete but would otherwise sit in TASKS.md forever. Confirm each one's PR state with the commands above, then archive+remove it and count it in tasksCompleted (a [x] whose PR has not merged goes back to [/] instead)."
 
   printf '%s' "$p"
 }
@@ -683,8 +707,7 @@ build_housekeeping_prompt_github() {
   local overnight_label stack_notes_label
   overnight_label="$(ts_gh_label overnight nl:overnight)"
   stack_notes_label="$(ts_gh_label stackNotes nl:stack-notes)"
-  local repo_flag=""
-  [[ -n "$TS_GITHUB_REPO" ]] && repo_flag=" --repo $TS_GITHUB_REPO"
+  local r="$TS_GITHUB_REPO"
   local blocked needs_human agent_ready verify research
   blocked="$(ts_gh_label blocked nl:blocked)"
   needs_human="$(ts_gh_label needsHuman nl:needs-human)"
@@ -693,7 +716,9 @@ build_housekeeping_prompt_github() {
   research="$(ts_gh_label research nl:research)"
   local p="A target repo has been added to this session via --add-dir. This session runs ONLY the end-of-session housekeeping step from the \"Overnight Agent Workflow\" rules in CLAUDE.md (this repo, nightlight's own) -- this run just finished dispatching one fresh session per task, so you were not present for any of them. Do not attempt any task work yourself. This is run $run of today, so name the housekeeping branch overnight/<YYYY-MM-DD>/r$run-housekeeping.
 
-This repo's backlog is GitHub Issues (taskSource \"github\"): the issues, not TASKS.md, are the task list. Do NOT create or edit TASKS.md or any docs/tasks-archive/ file, and skip the TASKS.md-specific maintenance rules in CLAUDE.md (glyphs, [/] / [!] / [x] sweeps, archiving). Task numbers below are issue numbers. Pass$repo_flag to every gh issue command.
+This repo's backlog is GitHub Issues (taskSource \"github\"): the issues, not TASKS.md, are the task list. Do NOT create or edit TASKS.md or any docs/tasks-archive/ file, and skip the TASKS.md-specific maintenance rules in CLAUDE.md (glyphs, [/] / [!] / [x] sweeps, archiving). Task numbers below are issue numbers.
+
+$(gh_prompt_prs) Issues live in $r. Copy these commands: comment \`gh api -X POST repos/$r/issues/<n>/comments -F body=@<file>\`; close \`gh api -X PATCH repos/$r/issues/<n> -f state=closed -f state_reason=completed\`; add a label \`gh api -X POST repos/$r/issues/<n>/labels -f 'labels[]=<label>'\`; current labels \`gh api repos/$r/issues/<n> --jq '[.labels[].name]'\`. To remove a label, PATCH the issue with the whole set you keep (\`-f 'labels[]=<label>'\` once per label): labels[] on a PATCH replaces every label, so read the current set first. Wrap issue numbers in backticks in comments you write.
 
 Here is what each dispatched task's own session reported when it finished, verbatim (one TASK_RESULT line per task attempted this run):
 ${run_summary:-"(no tasks were attempted this run)"}"
@@ -707,32 +732,32 @@ $skipped_summary"
 
   p="$p
 
-Treat the TASK_RESULT lines above as a starting point, not ground truth -- a task session can misreport, so confirm each PR/branch's actual state with git/gh before changing any issue (e.g. gh pr view <pr> --json state,mergedAt, or gh pr list --head <branch> --state all). Then, per attempted task:
-- PR merged: gh issue close <n> --reason completed with a comment linking the PR, add the $overnight_label label (see Counters below), and remove any status labels ($blocked, $needs_human) that no longer apply. Wrap issue numbers in backticks in comments you write.
+Treat the TASK_RESULT lines above as a starting point, not ground truth -- a task session can misreport, so confirm each PR/branch's actual state with git and the PR commands above before changing any issue. Then, per attempted task:
+- PR merged: comment linking the PR, then close it as completed and set its labels in that same PATCH: every current label except the status labels ($blocked, $needs_human), plus $overnight_label (see Counters below), e.g. \`gh api -X PATCH repos/$r/issues/<n> -f state=closed -f state_reason=completed -f 'labels[]=<kept label>' -f 'labels[]=$overnight_label'\`.
 - PR open, not merged: leave the issue open; no label change unless it reported needs-human.
-- Reported done with pr=none (a Verify task that found the work already exists): gh issue close <n> --reason completed with the note as the comment.
+- Reported done with pr=none (a Verify task that found the work already exists): comment the note, then close it as completed.
 - Reported blocked (no PR): add the $blocked label and comment the reason from the note.
 - Reported needs-human: add the $needs_human label and comment the exact steps (from the task PR description), then leave it open.
 Never close an issue whose PR has not merged, and never use a closing keyword to do it. The runner already created the nl:* labels, so don't create labels.
 
-Also sweep every other open issue labeled $agent_ready, $verify or $research (this includes any also labeled $needs_human), not just ones reported this run: an earlier run's task PR may have merged since, and nothing else closes the issue. Task branches are named overnight/<date>/r<R>-<PP>-i<n>-<slug>, so find an issue's PR with gh pr list --state all --json number,state,headRefName,mergedAt$repo_flag and match -i<n>- in headRefName (an older -t<n>- branch belongs to a pre-migration local task, never to this issue, unless that PR is still open). If that PR merged, close the issue as completed with a PR-link comment, add the $overnight_label label and remove any status labels. If it is still open, or there is no PR, leave the issue alone.
+Also sweep every other open issue labeled $agent_ready, $verify or $research (this includes any also labeled $needs_human), not just ones reported this run: an earlier run's task PR may have merged since, and nothing else closes the issue. Task branches are named overnight/<date>/r<R>-<PP>-i<n>-<slug>, so list every PR once (the \"Every PR\" command above) and match -i<n>- in head (an older -t<n>- branch belongs to a pre-migration local task, never to this issue, unless that PR is still open). If that PR merged, handle it like the PR-merged case above (PR-link comment, close, $overnight_label in, status labels out). If it is still open, or there is no PR, leave the issue alone.
 
 Also flag, never silently resolve, any open issue carrying contradictory labels (e.g. $blocked together with $needs_human, or more than one section label): comment on the issue describing the conflict and mention it in your final message, but change no labels.
 
-Counters: whenever you close an issue because its overnight/* task PR merged (the per-task PR-merged case and the sweep above, not the pr=none case), also add the $overnight_label label in the same step (gh issue edit <n> --add-label $overnight_label$repo_flag). stats.sh counts completions from that label, so do NOT touch docs/nightlight-meta.json or write any counter.
+Counters: whenever you close an issue because its overnight/* task PR merged (the per-task PR-merged case and the sweep above, not the pr=none case), also add the $overnight_label label in the same step (the closing PATCH above). stats.sh counts completions from that label, so do NOT touch docs/nightlight-meta.json or write any counter.
 
-Stack notes live in the tracker, one tracking issue per stack titled \"stack-notes: <stack>\" (label $stack_notes_label), not in a file. After all the closes above, run the stack-notes sweep, one deterministic script: bash lib/stack-notes.sh <target-repo-path> --remote ${notes_dir:-<notes-dir>}$keep_args (run it from this repo, nightlight; the target repo is the --add-dir), adding one more --keep <name> for every stack that still has an open issue labeled nl:stack:<name>. It deletes merged stack branches locally and on origin and prints \"finished <stack>\" for each finished stack. For each finished stack, retitle its tracking issue: find it with gh issue list --label $stack_notes_label --state all --json number,title$repo_flag and run gh issue edit <number> --title \"[done] stack-notes: <stack>\"$repo_flag (skip one already prefixed [done]). Do not re-implement or second-guess the sweep's checks; report what it prints in your final message.
+Stack notes live in the tracker, one tracking issue per stack titled \"stack-notes: <stack>\" (label $stack_notes_label), not in a file. After all the closes above, run the stack-notes sweep, one deterministic script: bash lib/stack-notes.sh <target-repo-path> --remote ${notes_dir:-<notes-dir>}$keep_args (run it from this repo, nightlight; the target repo is the --add-dir), adding one more --keep <name> for every stack that still has an open issue labeled nl:stack:<name>. It deletes merged stack branches locally and on origin and prints \"finished <stack>\" for each finished stack. For each finished stack, retitle its tracking issue: find it with \`gh api 'repos/$r/issues?state=all&labels=$stack_notes_label&per_page=100' --jq '.[] | {number, title}'\` and run \`gh api -X PATCH repos/$r/issues/<number> -f title='[done] stack-notes: <stack>'\` (skip one already prefixed [done]). Do not re-implement or second-guess the sweep's checks; report what it prints in your final message.
 
-Abnormal run: a normal run commits nothing and opens NO PR; the tracker writes above and the branch deletions are the whole job. The one abnormal case is a \"removed-legacy <stack>\" line from the sweep, a docs/stack-notes/<stack>.md file left from before notes moved to the tracker, already staged with git rm. Only then create overnight/<YYYY-MM-DD>/r$run-housekeeping from main, commit the staged removals, and open a PR chore: session housekeeping <date> targeting main, listing the removed files in the body. Otherwise create no branch, no commit and no PR. Anything else odd (a failed gh call, a flagged label conflict) goes in your final message and the issue comments, not a PR.
+Abnormal run: a normal run commits nothing and opens NO PR; the tracker writes above and the branch deletions are the whole job. The one abnormal case is a \"removed-legacy <stack>\" line from the sweep, a docs/stack-notes/<stack>.md file left from before notes moved to the tracker, already staged with git rm. Only then create overnight/<YYYY-MM-DD>/r$run-housekeeping from main, commit the staged removals, and open a PR chore: session housekeeping <date> targeting main, listing the removed files in the body. Otherwise create no branch, no commit and no PR. Open that PR with $(gh_prompt_pr_create "overnight/<YYYY-MM-DD>/r$run-housekeeping" main). Anything else odd (a failed gh call, a flagged label conflict) goes in your final message and the issue comments, not a PR.
 
-Milestones: each non-solo stack is a GitHub milestone titled with the stack name. For every stack the sweep just reported as finished (same condition: every Branch: PR merged, no open nl:stack:<name> issue), close its milestone: find it with gh api 'repos/<owner>/<repo>/milestones?state=all' --paginate, then gh api -X PATCH repos/<owner>/<repo>/milestones/<number> -f state=closed (skip it if already closed). Never touch solo, and never close a milestone for a stack the sweep kept. A stack resumed this run (dispatched, or with an open nl:stack issue) whose milestone is closed gets reopened with -f state=open. If a gh api call fails, note it in your final message and continue; the label is authoritative."
+Milestones: each non-solo stack is a GitHub milestone titled with the stack name. For every stack the sweep just reported as finished (same condition: every Branch: PR merged, no open nl:stack:<name> issue), close its milestone: find it with \`gh api 'repos/$r/milestones?state=all&per_page=100' --jq '.[] | {number, title, state}'\`, then \`gh api -X PATCH repos/$r/milestones/<number> -f state=closed\` (skip it if already closed). Never touch solo, and never close a milestone for a stack the sweep kept. A stack resumed this run (dispatched, or with an open nl:stack issue) whose milestone is closed gets reopened with -f state=open. If a gh api call fails, note it in your final message and continue; the label is authoritative."
 
   printf '%s' "$p"
 }
 
 # Linear-mode variant of build_housekeeping_prompt_github: same structure, but
 # every tracker write goes through the Linear MCP tools instead of gh issue.
-# PR state still comes from gh pr (the code lives on GitHub).
+# PR state still comes from gh api REST (the code lives on GitHub).
 build_housekeeping_prompt_linear() {
   local run_summary="$1" skipped_summary="$2" run="$3" keep_args="${4:-}" notes_dir="${5:-}"
   local overnight_label
@@ -751,11 +776,13 @@ build_housekeeping_prompt_linear() {
   if [[ -n "$st_queued$st_started$st_review" && -n "${LINEAR_LEDGER:-}" ]]; then
     status_restore="
 
-Status ledger: the runner moved issues to ${st_queued:+\"$st_queued\" (queued) }${st_started:+\"$st_started\" (started) }${st_review:+\"$st_review\" (review) }and recorded each one's original status in $LINEAR_LEDGER (a JSON object mapping issue id to {original, set}; read it with the Read tool, and skip this whole section if the file is missing or empty). Never edit that file, the runner prunes it. For every entry, get_issue it and confirm its current status name equals its \"set\" value (otherwise someone already moved it: leave it). Then check its task PR (match the id case-insensitively in headRefName, as in the sweep below): merged means the PR-merged rule applies (Done); open means it stays in ${st_review:-its current status}; no PR or a PR closed unmerged means restore it with save_issue to the entry's \"original\" status name (a crash, --limit or a blocked task left it behind), and say so in your final message. A restored issue keeps any $blocked or $needs_human label it was given this run."
+Status ledger: the runner moved issues to ${st_queued:+\"$st_queued\" (queued) }${st_started:+\"$st_started\" (started) }${st_review:+\"$st_review\" (review) }and recorded each one's original status in $LINEAR_LEDGER (a JSON object mapping issue id to {original, set}; read it with the Read tool, and skip this whole section if the file is missing or empty). Never edit that file, the runner prunes it. For every entry, get_issue it and confirm its current status name equals its \"set\" value (otherwise someone already moved it: leave it). Then check its task PR (match the id case-insensitively in head, as in the sweep below): merged means the PR-merged rule applies (Done); open means it stays in ${st_review:-its current status}; no PR or a PR closed unmerged means restore it with save_issue to the entry's \"original\" status name (a crash, --limit or a blocked task left it behind), and say so in your final message. A restored issue keeps any $blocked or $needs_human label it was given this run."
   fi
   local p="A target repo has been added to this session via --add-dir. This session runs ONLY the end-of-session housekeeping step from the \"Overnight Agent Workflow\" rules in CLAUDE.md (this repo, nightlight's own) -- this run just finished dispatching one fresh session per task, so you were not present for any of them. Do not attempt any task work yourself. This is run $run of today, so name the housekeeping branch overnight/<YYYY-MM-DD>/r$run-housekeeping.
 
 This repo's backlog is Linear issues (taskSource \"linear\", team $TS_LINEAR_TEAM_ID): the issues, not TASKS.md, are the task list. Do NOT create or edit TASKS.md or any docs/tasks-archive/ file, and skip the TASKS.md-specific maintenance rules in CLAUDE.md. Task ids below are Linear identifiers (e.g. ENG-142). Make every tracker change through the Linear MCP tools (mcp__linear__*: list_issues, get_issue, save_issue, save_comment, list_issue_labels, create_issue_label, list_issue_statuses, list_documents, save_document; load their schemas first), never gh issue. gh is only for PR and branch state.
+
+$(gh_prompt_prs)
 
 Here is what each dispatched task's own session reported when it finished, verbatim (one TASK_RESULT line per task attempted this run):
 ${run_summary:-"(no tasks were attempted this run)"}"
@@ -769,7 +796,7 @@ $skipped_summary"
 
   p="$p
 
-Treat the TASK_RESULT lines above as a starting point, not ground truth -- a task session can misreport, so confirm each PR/branch's actual state with git/gh before changing any issue (e.g. gh pr view <pr> --json state,mergedAt, or gh pr list --head <branch> --state all). Then, per attempted task:
+Treat the TASK_RESULT lines above as a starting point, not ground truth -- a task session can misreport, so confirm each PR/branch's actual state with git and the PR commands above before changing any issue. Then, per attempted task:
 - PR merged: save_issue to move it to the Done status${st_done:+ (\"$st_done\")}, add the $overnight_label label (see Counters below) and drop any status labels ($blocked, $needs_human) that no longer apply, plus save_comment linking the PR. Labels set through save_issue replace the whole list, so read the issue's current labels first and resend the ones you keep. Wrap task ids in backticks in comments you write.
 - PR open, not merged: save_issue to move it to the review status (skip when none is configured or it is already there); no label change unless it reported needs-human.
 - Reported done with pr=none (a Verify task that found the work already exists): move it to the Done status with the note as the comment.
@@ -777,7 +804,7 @@ Treat the TASK_RESULT lines above as a starting point, not ground truth -- a tas
 - Reported needs-human: add the $needs_human label and save_comment the exact steps (from the task PR description), then leave it open.
 Never move an issue to Done unless its PR merged (or it is the pr=none case above). $status_rules$status_restore Before adding $blocked or $needs_human, create it with create_issue_label if list_issue_labels shows the team lacks it.
 
-Also sweep every other open issue labeled $agent_ready, $verify or $research (this includes any also labeled $needs_human), not just ones reported this run: an earlier run's task PR may have merged since, and nothing else moves the issue. Task branches are named overnight/<date>/r<R>-<PP>-i<id>-<slug> (older ones -t<id>-), so find an issue's PR with gh pr list --state all --json number,state,headRefName,mergedAt and match -i<id>- or -t<id>- case-insensitively in headRefName. If that PR merged, move the issue to the Done status with a PR-link comment, add the $overnight_label label and remove any status labels. If it is still open, move it to the review status if it is not there yet. With no PR, leave the issue alone.
+Also sweep every other open issue labeled $agent_ready, $verify or $research (this includes any also labeled $needs_human), not just ones reported this run: an earlier run's task PR may have merged since, and nothing else moves the issue. Task branches are named overnight/<date>/r<R>-<PP>-i<id>-<slug> (older ones -t<id>-), so list every PR once (the \"Every PR\" command above) and match -i<id>- or -t<id>- case-insensitively in head. If that PR merged, move the issue to the Done status with a PR-link comment, add the $overnight_label label and remove any status labels. If it is still open, move it to the review status if it is not there yet. With no PR, leave the issue alone.
 
 Also flag, never silently resolve, any open issue carrying contradictory labels (e.g. $blocked together with $needs_human, or more than one section label): save_comment describing the conflict and mention it in your final message, but change no labels.
 
@@ -1143,6 +1170,12 @@ run_repo() {
     return 0
   fi
 
+  # owner/name for the PR lookups; empty when origin can't be read, which makes
+  # every lookup fail, and a failed lookup is always treated conservatively.
+  GH_REPO_SLUG="$(gh_slug "$repo_path" 2>/dev/null)" || GH_REPO_SLUG=""
+  TASK_PR_CACHE=""
+  [[ "$TASK_SOURCE" == local ]] || load_task_prs || true
+
   if [[ "$TASK_SOURCE" == linear ]]; then
     LINEAR_LEDGER="logs/$name/status-ledger.json"
     ts_linear_ledger_prune "$LINEAR_LEDGER"
@@ -1151,7 +1184,6 @@ run_repo() {
 
   local -A stack_branch=()
   local attempted=0 pr_skipped=0 consecutive_failures=0
-  TASK_PR_CACHE=""
   local run_summary="" skipped_summary="" ran_keep_args=""
   local session_calls=0 session_cost=0 session_duration=0 session_turns=0 session_cache_read=0 session_cache_creation=0 session_input=0 session_output=0
 
