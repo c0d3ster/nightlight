@@ -42,6 +42,16 @@ test_list_tasks_comment_failure() {
   ts_list_tasks /nowhere "$TMP/out" >/dev/null 2>&1 && fail "should fail"
   return 0
 }
+test_list_tasks_long_thread() {
+  # Over the kernel's 128 KiB per-argument limit: must not travel as a jq arg.
+  setup; sections
+  head -c 300000 /dev/zero | tr '\0' x | jq -Rs '[{author_association: "OWNER", user: {login: "o"}, body: .}]' > "$TMP/c.json"
+  route "GET repos/$R/issues/11/comments?per_page=100" "$TMP/c.json"
+  local out; out="$(ts_list_tasks /nowhere "$TMP/out")" || fail "list failed"
+  local f11; f11="$(sed -n 3p <<< "$out" | cut -f3)"
+  has "$(cat "$f11")" "### Comment by o"
+  eq "$(ls -A "$TMP/out" | grep -vc '\.task$')" 0 "no scratch file left"
+}
 test_is_eligible() {
   setup; sections; ts_is_eligible /nowhere; eq "$?" 0 "tasks"
   : > "$GH_STUB_DIR/routes"; setup; local e; e="$(empty)"
