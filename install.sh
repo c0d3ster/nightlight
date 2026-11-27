@@ -2,13 +2,15 @@
 # usage: bash install.sh [--unlink]
 #   Symlinks each .claude/skills/<name>/ (with a SKILL.md) into ~/.claude/skills
 #   and each .claude/agents/<name>.md into ~/.claude/agents, so the skills run
-#   from inside any repo. A stopgap until the plugin. Safe to repeat. Anything
-#   already there that isn't an earlier link or copy of the same skill or agent
-#   is skipped, never removed. --unlink removes only links into this checkout.
+#   from inside any repo. A stopgap until the plugin. Safe to repeat. A copy
+#   already there (a directory with a SKILL.md, or an agent file of the same
+#   name) is moved to ~/.claude/backups/nightlight; anything else is skipped.
+#   Nothing is deleted. --unlink removes only links into this checkout.
 set -euo pipefail
 
 SKILLS_DIR="${HOME}/.claude/skills"
 AGENTS_DIR="${HOME}/.claude/agents"
+BACKUP_DIR="${HOME}/.claude/backups/nightlight"
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 UNLINK=0
 [[ "${1:-}" == --unlink ]] && UNLINK=1
@@ -50,8 +52,10 @@ link() {
       echo "Skipped: $name (exists and is not a copy of this one; move it aside to link)"
       return
     fi
-    rm -rf "$target"
-    echo "Replacing copy with symlink: $name"
+    # Same shape is not proof it's ours: move it aside instead of deleting.
+    local bak="$BACKUP_DIR/$name.$(date +%Y%m%d%H%M%S)"
+    mkdir -p "$BACKUP_DIR" && mv "$target" "$bak"
+    echo "Replacing copy with symlink: $name (old copy moved to $bak)"
   fi
 
   ln -s "$src" "$target"

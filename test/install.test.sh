@@ -20,6 +20,8 @@ test_existing_entries() {
   ln -s /gone/.claude/skills/discover-tasks "$TMP/home/.claude/skills/discover-tasks"
   local out; out="$(run)"
   has "$out" "Replacing copy with symlink: plan-tasks"; has "$out" "Replacing copy with symlink: task-scout.md"
+  eq "$(cat "$TMP"/home/.claude/backups/nightlight/task-scout.md.*)" old "replaced copy kept as a backup"
+  [[ -f "$(echo "$TMP"/home/.claude/backups/nightlight/plan-tasks.*/SKILL.md)" ]] || fail "skill copy backed up"
   has "$out" "Skipped: tidy-issues"; eq "$(cat "$TMP/home/.claude/skills/tidy-issues/notes")" mine "not a copy: untouched"
   has "$out" "Skipped: migrate-tasks (links to $TMP/elsewhere/migrate-tasks"
   eq "$(readlink "$TMP/home/.claude/skills/migrate-tasks")" "$TMP/elsewhere/migrate-tasks" "foreign link untouched"
