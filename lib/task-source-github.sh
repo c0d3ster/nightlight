@@ -156,25 +156,28 @@ ts_list_tasks() {
   rm -f "$outdir"/*.task
   ts_gh_fetch "$repo_path" || return 1
 
-  local idx=0 num stack ncom file comments
+  # Comments go to jq through a file: a long thread passed as an argument
+  # would hit the kernel's per-argument size limit.
+  local idx=0 num stack ncom file comments="$outdir/.comments.json"
   while IFS=$'\t' read -r num stack ncom; do
     num="${num%$'\r'}"; stack="${stack%$'\r'}"; ncom="${ncom%$'\r'}"
     idx=$((idx+1))
     file="$outdir/$(printf '%04d' "$idx")-$num.task"
-    comments='[]'
+    echo '[]' > "$comments"
     if [[ "$ncom" != 0 ]]; then
-      comments="$(gh_paged "repos/$TS_GITHUB_REPO/issues/$num/comments?per_page=100")" \
-        || { echo "error: reading comments of issue #$num failed" >&2; return 1; }
+      gh_paged "repos/$TS_GITHUB_REPO/issues/$num/comments?per_page=100" > "$comments" \
+        || { echo "error: reading comments of issue #$num failed" >&2; rm -f "$comments"; return 1; }
     fi
-    jq -r --argjson n "$num" --arg s "$stack" --argjson c "$comments" '
+    jq -r --argjson n "$num" --arg s "$stack" --slurpfile c "$comments" '
       .[] | select(.number == $n)
       | "- [ ] #\(.number) [stack: \($s)] \(.title)\n\n\(.body // "")"
-        + ([$c[]
+        + ([$c[0][]
             | select(.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR")
             | "\n\n### Comment by \(.user.login // "unknown")\n\n\(.body // "")"] | join(""))
     ' "$TS_GH_CACHE" | tr -d '\r' > "$file"
     printf '%s\t%s\t%s\n' "$num" "$stack" "$file"
   done < <(jq -r '.[] | "\(.number)\t\(.stack)\t\(.comments // 0)"' "$TS_GH_CACHE")
+  rm -f "$comments"
 }
 
 # How this source writes a task id in the TASK_RESULT line the prompt asks for.
