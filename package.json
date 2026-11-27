@@ -8,7 +8,8 @@
     "discover": "bash discover.sh",
     "migrate": "bash migrate.sh",
     "tidy": "bash tidy.sh",
-    "overnight": " bash overnight.sh",
-    "stats": "bash stats.sh"
+    "overnight": "bash overnight.sh",
+    "stats": "bash stats.sh",
+    "install-skills": "bash install.sh"
   }
 }
