@@ -3,8 +3,8 @@
 # label. Sourced by overnight.sh's run_repo(); see docs/plans/multi-task-source.md
 # Phase 2 for the design and the ts_* contract in Phase 1.2.
 
-# Every GitHub call goes through the REST wrappers (GraphQL is blocked in cloud sessions).
-source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/gh-rest.sh"
+# Every GitHub call is REST (lib/github.sh): GraphQL is blocked in cloud sessions.
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/github.sh"
 
 # --stop-after compares ids numerically; issue numbers are plain integers.
 TS_NUMERIC_IDS=1
@@ -28,8 +28,8 @@ ts_gh_ensure_labels() {
   local repo_path="$1"; shift
   ts_gh_resolve_repo "$repo_path" || return 1
   local have err name rc=0
-  have="$(ghr_label_list "$TS_GITHUB_REPO" 2>&1)" \
-    || { ts_gh_explain "gh label list failed" "$have"; return 1; }
+  have="$(gh_paged "repos/$TS_GITHUB_REPO/labels?per_page=100" '{name}' 2>&1)" \
+    || { ts_gh_explain "listing labels failed" "$have"; return 1; }
   have="$(jq -r '.[].name' <<< "$have")"
   for name in "$(ts_gh_label agentReady nl:agent-ready)" "$(ts_gh_label verify nl:verify)" "$(ts_gh_label research nl:research)" \
     "$(ts_gh_label blocked nl:blocked)" "$(ts_gh_label needsHuman nl:needs-human)" "$(ts_gh_label overnight nl:overnight)" \
@@ -37,10 +37,14 @@ ts_gh_ensure_labels() {
     [[ -n "$name" ]] || continue
     grep -qixF -- "$name" <<< "$have" && continue
     have="$have"$'\n'"$name"
-    if err="$(ghr_label_create "$TS_GITHUB_REPO" "$name" 2>&1)"; then
+    # A random color, as gh's label command picks. Both streams are captured:
+    # gh api prints GitHub's error body (code "already_exists") on stdout.
+    if err="$(gh_write -X POST "repos/$TS_GITHUB_REPO/labels" -f name="$name" \
+      -f color="$(printf '%06x' $(( (RANDOM << 9 ^ RANDOM) & 0xffffff )))" 2>&1)"; then
+      [[ "${DRY_RUN:-}" == 1 ]] && printf '%s\n' "$err" >&2
       echo "created $name"
     elif ! grep -qiE 'already.exists' <<< "$err"; then
-      ts_gh_explain "gh label create $name failed" "$err"; rc=1
+      ts_gh_explain "creating label $name failed" "$err"; rc=1
     fi
   done
   return $rc
@@ -64,16 +68,13 @@ ts_gh_explain() {
 # Sets TS_GITHUB_REPO to github.repo, else the target repo's origin.
 ts_gh_resolve_repo() {
   [[ -n "$TS_GITHUB_REPO" ]] && return 0
-  local out err; err="$(mktemp)"
-  if out="$(ghr_repo "$1" 2>"$err")" && [[ -n "$out" ]]; then
-    TS_GITHUB_REPO="$out"; rm -f "$err"; return 0
-  fi
-  ts_gh_explain "can't resolve the repo from origin (or set github.repo in docs/nightlight-meta.json)" "$(cat "$err")"
-  rm -f "$err"
+  local out
+  if out="$(gh_slug "$1" 2>&1)"; then TS_GITHUB_REPO="$out"; return 0; fi
+  ts_gh_explain "can't resolve the repo from origin (or set github.repo in docs/nightlight-meta.json)" "$out"
   return 1
 }
 
-# Fetches open issues for each section label once, merges, drops blocked and
+# Fetches open issues (raw REST objects) for each section label once, merges, drops blocked and
 # needs-human, and orders them: issue number within a stack, priority label
 # between groups (a non-solo stack is one group ranked by its best member, each
 # solo task its own group; high first, unlabeled next, low last; ties by lowest
@@ -94,8 +95,8 @@ ts_gh_fetch() {
   local raw; raw="$(mktemp)"
   local label
   for label in "${sections[@]}"; do
-    ghr_issue_list "$TS_GITHUB_REPO" --state open --label "$label" --comments >> "$raw" \
-      || { echo "error: gh issue list failed for label $label" >&2; rm -f "$raw"; return 1; }
+    gh_issues "$TS_GITHUB_REPO" open "$label" >> "$raw" \
+      || { echo "error: listing issues failed for label $label" >&2; rm -f "$raw"; return 1; }
   done
 
   TS_GH_CACHE="$(mktemp)"
@@ -134,39 +135,46 @@ ts_is_eligible() {
 ts_discovered_count() {
   local out err; err="$(mktemp)"
   ts_gh_resolve_repo "$1" || { rm -f "$err"; echo 0; return 1; }
-  if out="$(ghr_issue_list "$TS_GITHUB_REPO" --state open --label "$(ts_gh_label discovered nl:discovered)" 2>"$err")"; then
+  if out="$(gh_issues "$TS_GITHUB_REPO" open "$(ts_gh_label discovered nl:discovered)" 2>"$err")"; then
     rm -f "$err"; jq length <<< "$out"; return 0
   fi
-  ts_gh_explain "gh issue list failed for the discovered label" "$(cat "$err")"
+  ts_gh_explain "listing issues failed for the discovered label" "$(cat "$err")"
   rm -f "$err"; echo 0; return 1
 }
 
 # Writes one synthesized block file per issue under $2 (clearing anything
 # already there) and prints "<number>\t<effective-stack>\t<blockfile>"
 # lines in dispatch order (see ts_gh_fetch). Effective stack is the nl:stack:*
-# label, else the previous task's stack (solo if none yet), resolved in fetch. Only OWNER/MEMBER/COLLABORATOR
-# comments make it into the block; the issue body is included as-is since the
-# section label (which needs triage access to apply) is the gate.
+# label, else the previous task's stack (solo if none yet), resolved in fetch.
+# Only OWNER/MEMBER/COLLABORATOR comments make it into the block; the issue body
+# is included as-is since the section label (which needs triage access to apply)
+# is the gate. Comments are fetched here, one call per issue that has any (REST's
+# comments count), so ts_is_eligible's fetch stays one call per label.
 ts_list_tasks() {
   local repo_path="$1" outdir="$2"
   mkdir -p "$outdir"
   rm -f "$outdir"/*.task
   ts_gh_fetch "$repo_path" || return 1
 
-  local idx=0 num stack file
-  while IFS=$'\t' read -r num stack; do
-    num="${num%$'\r'}"; stack="${stack%$'\r'}"
+  local idx=0 num stack ncom file comments
+  while IFS=$'\t' read -r num stack ncom; do
+    num="${num%$'\r'}"; stack="${stack%$'\r'}"; ncom="${ncom%$'\r'}"
     idx=$((idx+1))
     file="$outdir/$(printf '%04d' "$idx")-$num.task"
-    jq -r --argjson n "$num" --arg s "$stack" '
+    comments='[]'
+    if [[ "$ncom" != 0 ]]; then
+      comments="$(gh_paged "repos/$TS_GITHUB_REPO/issues/$num/comments?per_page=100")" \
+        || { echo "error: reading comments of issue #$num failed" >&2; return 1; }
+    fi
+    jq -r --argjson n "$num" --arg s "$stack" --argjson c "$comments" '
       .[] | select(.number == $n)
       | "- [ ] #\(.number) [stack: \($s)] \(.title)\n\n\(.body // "")"
-        + ([.comments[]?
-            | select(.authorAssociation == "OWNER" or .authorAssociation == "MEMBER" or .authorAssociation == "COLLABORATOR")
-            | "\n\n### Comment by \(.author.login // "unknown")\n\n\(.body // "")"] | join(""))
+        + ([$c[]
+            | select(.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR")
+            | "\n\n### Comment by \(.user.login // "unknown")\n\n\(.body // "")"] | join(""))
     ' "$TS_GH_CACHE" | tr -d '\r' > "$file"
     printf '%s\t%s\t%s\n' "$num" "$stack" "$file"
-  done < <(jq -r '.[] | "\(.number)\t\(.stack)"' "$TS_GH_CACHE")
+  done < <(jq -r '.[] | "\(.number)\t\(.stack)\t\(.comments // 0)"' "$TS_GH_CACHE")
 }
 
 # How this source writes a task id in the TASK_RESULT line the prompt asks for.
@@ -190,16 +198,15 @@ ts_find_related() {
     | sed -E 's/(^| )-+/\1/g; s/^ +//; s/ +$//')"
   [[ -z "$query" ]] && return 0
   ts_gh_resolve_repo "$repo_path" || return 1
-  local out
-  out="$(ghr_issue_search "$TS_GITHUB_REPO" "$query" --state all --limit 30)" || return 1
-  jq -r '.[] | "\(.state | ascii_downcase)\t#\(.number)\t\(.title)"' <<< "$out"
+  gh api "search/issues?q=$(gh_uri "$query repo:$TS_GITHUB_REPO is:issue")&per_page=30" \
+    --jq '.items[] | "\(.state)\t#\(.number)\t\(.title)"'
 }
 
 # Prints "<number> <state>" for the milestone titled $1 (any state), or nothing.
 # Title equals the stack name.
 ts_gh_milestone_lookup() {
   local title="$1"
-  gh api "repos/$TS_GITHUB_REPO/milestones?state=all&per_page=100" --paginate 2>/dev/null \
+  gh_paged "repos/$TS_GITHUB_REPO/milestones?state=all&per_page=100" '{number, state, title}' 2>/dev/null \
     | jq -r --arg t "$title" '.[] | select(.title == $t) | "\(.number) \(.state)"' | head -n1
 }
 
@@ -214,13 +221,13 @@ ts_ensure_group() {
   local found num state
   found="$(ts_gh_milestone_lookup "$stack")"
   if [[ -z "$found" ]]; then
-    gh api -X POST "repos/$TS_GITHUB_REPO/milestones" -f title="$stack" -f description="$desc" >/dev/null 2>&1 \
+    gh_write -X POST "repos/$TS_GITHUB_REPO/milestones" -f title="$stack" -f description="$desc" >/dev/null \
       || echo "warning: couldn't create milestone \"$stack\"; continuing (the label is authoritative)" >&2
     return 0
   fi
   read -r num state <<< "$found"
   [[ "$state" == "open" ]] && return 0
-  gh api -X PATCH "repos/$TS_GITHUB_REPO/milestones/$num" -f state=open >/dev/null 2>&1 \
+  gh_write -X PATCH "repos/$TS_GITHUB_REPO/milestones/$num" -f state=open >/dev/null \
     || echo "warning: couldn't reopen milestone \"$stack\"; continuing (the label is authoritative)" >&2
   return 0
 }
@@ -236,7 +243,7 @@ ts_close_group() {
   [[ -z "$found" ]] && return 0
   read -r num state <<< "$found"
   [[ "$state" == "closed" ]] && return 0
-  gh api -X PATCH "repos/$TS_GITHUB_REPO/milestones/$num" -f state=closed >/dev/null 2>&1 \
+  gh_write -X PATCH "repos/$TS_GITHUB_REPO/milestones/$num" -f state=closed >/dev/null \
     || echo "warning: couldn't close milestone \"$stack\"; continuing (the label is authoritative)" >&2
   return 0
 }
@@ -250,38 +257,43 @@ ts_close_group() {
 # Writes <dir>/<stack>.md (every comment body, oldest first, blank-line
 # separated) and <dir>/<stack>.ref (one line naming the tracking issue) for each
 # stack-notes issue, or just stack $3 when given. Writes nothing for a stack
-# with no issue. Fails if gh does.
+# with no issue. Fails if gh does. Comments are fetched only for the stacks
+# written, and only from issues that have any.
 ts_stack_notes_export() {
   local repo_path="$1" dir="$2" only="${3:-}"
   ts_gh_resolve_repo "$repo_path" || return 1
   mkdir -p "$dir"
   local raw
-  raw="$(ghr_issue_list "$TS_GITHUB_REPO" --state all --label "$(ts_gh_label stackNotes nl:stack-notes)" --comments)" || return 1
-  local stack
-  while IFS= read -r stack; do
-    stack="${stack%$'\r'}"
-    [[ -n "$stack" ]] || continue
-    [[ -z "$only" || "$stack" == "$only" ]] || continue
-    jq -r --arg s "$stack" '
-      [.[] | select((.title | sub("^[[]done[]] "; "") | sub("^stack-notes: "; "")) == $s)] | first
-      | [.comments[]?.body] | join("\n\n")' <<< "$raw" | tr -d '\r' > "$dir/$stack.md"
-    jq -r --arg s "$stack" '
-      [.[] | select((.title | sub("^[[]done[]] "; "") | sub("^stack-notes: "; "")) == $s)] | first
-      | "issue #\(.number), currently titled \"\(.title)\""' <<< "$raw" > "$dir/$stack.ref"
-  done < <(jq -r '.[] | select(.title | test("^([[]done[]] )?stack-notes: ")) | .title | sub("^[[]done[]] "; "") | sub("^stack-notes: "; "")' <<< "$raw")
+  raw="$(gh_issues "$TS_GITHUB_REPO" all "$(ts_gh_label stackNotes nl:stack-notes)")" || return 1
+  local stack num ncom title
+  # One row per stack, its first issue in list order (newest first).
+  while IFS=$'\t' read -r stack num ncom title; do
+    [[ -n "$stack" && ( -z "$only" || "$stack" == "$only" ) ]] || continue
+    if [[ "$ncom" == 0 ]]; then
+      : > "$dir/$stack.md"
+    else
+      gh_paged "repos/$TS_GITHUB_REPO/issues/$num/comments?per_page=100" \
+        | jq -r 'map(.body // "") | join("\n\n")' | tr -d '\r' > "$dir/$stack.md"
+      [[ "${PIPESTATUS[0]}" == 0 ]] || return 1
+    fi
+    printf 'issue #%s, currently titled "%s"\n' "$num" "$title" > "$dir/$stack.ref"
+  done < <(jq -r '
+    map(select(.title | test("^([[]done[]] )?stack-notes: "))
+      | . + {stack: (.title | sub("^[[]done[]] "; "") | sub("^stack-notes: "; ""))})
+    | unique_by(.stack)[] | "\(.stack)\t\(.number)\t\(.comments // 0)\t\(.title)"' <<< "$raw" | tr -d '\r')
 }
 
 # Prompt text telling a task session how to write its stack-notes entry.
 # $1 stack, $2 ref line from ts_stack_notes_export (empty: no issue yet).
 ts_stack_notes_write_instructions() {
-  local stack="$1" ref="${2:-}" label repo_flag=""
+  local stack="$1" ref="${2:-}" label r="${TS_GITHUB_REPO:-<owner>/<repo>}"
   label="$(ts_gh_label stackNotes nl:stack-notes)"
-  [[ -n "$TS_GITHUB_REPO" ]] && repo_flag=" --repo $TS_GITHUB_REPO"
+  local comment="\`gh api -X POST repos/$r/issues/<number>/comments -F body=@<file> --jq .html_url\`"
   if [[ -z "$ref" ]]; then
-    printf '%s' "Stack notes live in the tracker, not in a file. No tracking issue exists for this stack yet: create it with \`gh issue create$repo_flag --title \"stack-notes: $stack\" --label $label --body \"Stack notes for $stack. One comment per task; do not edit.\"\` (the label already exists; give the issue no other labels), then post your entry as a comment with \`gh issue comment <number>$repo_flag --body-file <file>\`."
+    printf '%s' "Stack notes live in the tracker, not in a file. No tracking issue exists for this stack yet: create it with \`gh api -X POST repos/$r/issues -f title='stack-notes: $stack' -f 'labels[]=$label' -f body='Stack notes for $stack. One comment per task; do not edit.' --jq .number\` (the label already exists; give the issue no other labels), then post your entry as a comment with $comment."
     return 0
   fi
-  printf '%s' "Stack notes live in the tracker, not in a file: the tracking issue is $ref. Post your entry as ONE new comment with \`gh issue comment <number>$repo_flag --body-file <file>\` (never edit earlier comments). If its title starts with \"[done] \" (the stack was finished and is now resumed), also drop that prefix with \`gh issue edit <number>$repo_flag --title \"stack-notes: $stack\"\`."
+  printf '%s' "Stack notes live in the tracker, not in a file: the tracking issue is $ref. Post your entry as ONE new comment with $comment (never edit earlier comments). If its title starts with \"[done] \" (the stack was finished and is now resumed), also drop that prefix with \`gh api -X PATCH repos/$r/issues/<number> -f title='stack-notes: $stack'\`."
 }
 
 # Counts for stats.sh: prints "<overnight> <manual> <blocked>". overnight =
@@ -295,11 +307,11 @@ ts_stats_counts() {
   blocked_label="$(ts_gh_label blocked nl:blocked)"
   local closed="" label raw
   for label in "$(ts_gh_label agentReady nl:agent-ready)" "$(ts_gh_label verify nl:verify)" "$(ts_gh_label research nl:research)" "$overnight_label"; do
-    raw="$(ghr_issue_list "$TS_GITHUB_REPO" --state closed --label "$label")" || return 1
+    raw="$(gh_issues "$TS_GITHUB_REPO" closed "$label")" || return 1
     closed="$closed$raw"
   done
   local blocked
-  blocked="$(ghr_issue_list "$TS_GITHUB_REPO" --state open --label "$blocked_label")" || return 1
+  blocked="$(gh_issues "$TS_GITHUB_REPO" open "$blocked_label")" || return 1
   blocked="$(jq length <<< "$blocked")"
   jq -rs --arg o "$overnight_label" --argjson b "$blocked" '
     (add // []) | unique_by(.number) as $all

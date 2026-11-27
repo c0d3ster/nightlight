@@ -3,6 +3,7 @@
 # Modules load from this file's own directory, so any cwd works.
 NL_LIB="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$NL_LIB/env.sh"
+source "$NL_LIB/github.sh"
 
 # Reads taskSource and its config blocks from $1 (repo path)'s
 # docs/nightlight-meta.json, then sources lib/task-source-<name>.sh. Missing
