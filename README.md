@@ -151,13 +151,13 @@ A skill run from another repo enforces the same denylist as a session launched f
 
 ### Model
 
-Overnight sessions run on `sonnet` to keep runs cheap. To change that for every repo, set `NIGHTLIGHT_MODEL` in nightlight's `.env` (for example `NIGHTLIGHT_MODEL=opus` on a Max plan). A single repo can override both with `model` in its `docs/nightlight-meta.json`:
+Overnight sessions default to `sonnet`, which balances cost and quality for routine tasks. To change that for every repo, set `NIGHTLIGHT_MODEL` in nightlight's `.env` (for example `NIGHTLIGHT_MODEL=opus` on a Max plan). A single repo can override both with `model` in its `docs/nightlight-meta.json`:
 
 ```json
 { "model": "sonnet" }
 ```
 
-Order: the meta's `model`, then `NIGHTLIGHT_MODEL`, then `sonnet`. Use an alias (`opus`, `sonnet`, `haiku`) so new releases are picked up automatically. A full model id pins one version. `pnpm migrate` asks whether the repo should keep the default when it writes the meta file. The interactive skills (`/plan-tasks`, `/discover-tasks`) run on your session's model, and their `task-scout` / `task-investigator` subagents on the `model:` in `.claude/agents/`.
+Order: the meta's `model`, then `NIGHTLIGHT_MODEL`, then `sonnet`. Use an alias (`opus`, `sonnet`, `haiku`) so new releases are picked up automatically. A full model id pins one version. `pnpm migrate` asks whether the repo should keep the default when it writes the meta file. The interactive skills run on your session's model, and their `task-scout` / `task-investigator` subagents on the `model:` in `.claude/agents/`.
 
 ### GitHub issues (opt-in)
 

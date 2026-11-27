@@ -35,7 +35,7 @@ load_task_source() {
   TASK_SOURCE=local TS_GITHUB_REPO="" TS_LINEAR_TEAM_ID="" TS_LINEAR_STATUSES_JSON="{}" TS_LABELS_JSON="{}"
   # The model every claude -p session for this repo runs on: the meta's
   # "model", else NIGHTLIGHT_MODEL from nightlight's .env (your plan is about
-  # you, not the repo), else sonnet to keep runs cheap. An alias (opus,
+  # you, not the repo), else sonnet, the cost/quality default. An alias (opus,
   # sonnet, haiku) follows the newest release of that family.
   NL_MODEL="${NIGHTLIGHT_MODEL:-sonnet}"
   if [[ -f "$meta" ]]; then
