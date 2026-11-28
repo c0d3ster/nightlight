@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# usage: pnpm discover [repo] [--scan]
-#   with repo: mine that one repo's memory (and, with --scan, its codebase)
-#              for task candidates and propose additions to its TASKS.md
+# usage: pnpm discover [repo] [--deep]
+#   with repo: turn that one repo's known work (memory and docs/prd/) into
+#              task candidates and propose additions to its TASKS.md; --deep
+#              also scans its README, code, other docs and research
 #   without:   same, but for every repo under PROJECT_REPOS_DIR -- discover
 #              has no TASKS.md prerequisite (it can create one), so every
 #              repo qualifies, no filtering needed
@@ -14,13 +15,14 @@ set -a; source .env; set +a
 : "${PROJECT_REPOS_DIR:?PROJECT_REPOS_DIR not set in .env}"
 
 REPO=""
-SCAN_FLAG=""
+DEEP_FLAG=""
 for arg in "$@"; do
-  if [[ "$arg" == "--scan" ]]; then
-    SCAN_FLAG=" --scan"
-  else
-    REPO="$arg"
-  fi
+  case "$arg" in
+    --deep) DEEP_FLAG=" --deep" ;;
+    --scan) echo "note: --scan is now --deep"; DEEP_FLAG=" --deep" ;;
+    --*) echo "unknown flag: $arg"; exit 1 ;;
+    *) REPO="$arg" ;;
+  esac
 done
 
 if [[ -n "$REPO" ]]; then
@@ -35,7 +37,7 @@ if [[ -n "$REPO" ]]; then
   # the casing Claude Code's directory-trust store uses elsewhere, so trust
   # never "sticks" and every subrepo re-prompts on every run.
   REPO="$(cd "$REPO" && pwd -W)"
-  MSYS_NO_PATHCONV=1 claude "/discover-tasks$SCAN_FLAG" --add-dir "$REPO"
+  MSYS_NO_PATHCONV=1 claude "/discover-tasks$DEEP_FLAG" --add-dir "$REPO"
 else
   # No repo given and no filter exists for discover, so every repo under
   # PROJECT_REPOS_DIR is in scope -- attach the whole folder as one --add-dir
@@ -43,5 +45,5 @@ else
   # nothing gets excluded). The /discover-tasks skill enumerates the repo
   # subdirectories itself once it's running.
   PROJECT_REPOS_DIR="$(cd "$PROJECT_REPOS_DIR" && pwd -W)"
-  MSYS_NO_PATHCONV=1 claude "/discover-tasks$SCAN_FLAG" --add-dir "$PROJECT_REPOS_DIR"
+  MSYS_NO_PATHCONV=1 claude "/discover-tasks$DEEP_FLAG" --add-dir "$PROJECT_REPOS_DIR"
 fi

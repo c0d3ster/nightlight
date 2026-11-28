@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# usage: pnpm nightlight [repo] [--scan] [overnight flags]
+# usage: pnpm nightlight [repo] [--deep] [overnight flags]
 #   with repo: chains discover -> plan -> overnight for that one repo
 #   without:   chains discover -> plan -> overnight, each in its own
 #              no-arg multi-repo mode across PROJECT_REPOS_DIR
 #
-#   --scan is forwarded to discover only.
+#   --deep is forwarded to discover only (--scan is its old name).
 #   --stop-after/--limit/--stack/--extra-instructions/--override-prompt/--force
 #   are forwarded to overnight only, exactly as overnight.sh itself defines
 #   them (including its own single-repo requirement for all but --limit and
@@ -13,11 +13,11 @@ set -e
 cd "$(dirname "$0")"
 
 REPO=""
-SCAN_FLAG=""
+DEEP_FLAG=""
 OVERNIGHT_FLAGS=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --scan) SCAN_FLAG="--scan"; shift ;;
+    --deep|--scan) DEEP_FLAG="$1"; shift ;;
     --stop-after|--limit|--stack|--extra-instructions|--override-prompt)
       OVERNIGHT_FLAGS+=("$1" "$2"); shift 2 ;;
     --force)
@@ -28,7 +28,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 REPO_ARGS=(); [[ -n "$REPO" ]] && REPO_ARGS+=("$REPO")
-DISCOVER_ARGS=("${REPO_ARGS[@]}"); [[ -n "$SCAN_FLAG" ]] && DISCOVER_ARGS+=("--scan")
+DISCOVER_ARGS=("${REPO_ARGS[@]}"); [[ -n "$DEEP_FLAG" ]] && DISCOVER_ARGS+=("$DEEP_FLAG")
 
 echo "=== discover ==="
 ./discover.sh "${DISCOVER_ARGS[@]}"
