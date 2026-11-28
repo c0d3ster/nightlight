@@ -50,7 +50,7 @@ Every script has a `pnpm` alias that takes the same args.
 | `./install.sh [--unlink]` | `pnpm install-skills` | link the skills and agents into `~/.claude` |
 | `bash test/run.sh` | `pnpm test` | the test suite (bash, a `gh` stub, no network; CI runs it on every PR) |
 
-- **Repo argument:** a bare name resolves against `PROJECT_REPOS_DIR`, and a full path also works. With no repo, `discover`, `plan`, `overnight` and `nightlight` cover every repo there with work to do.
+- **Repo argument:** a bare name resolves against `PROJECT_REPOS_DIR`. A path, including `.`, is read from where you run the script, so `<nightlight>/overnight.sh .` works from inside any repo. With no repo, `discover`, `plan`, `overnight` and `nightlight` cover every repo under `PROJECT_REPOS_DIR` with work to do.
 - **Latest rules:** `discover`, `plan`, `overnight`, `migrate` and `tidy` pull nightlight first.
 - **Interactive scripts:** `discover`, `plan`, `migrate` and `tidy` open a normal session with the skill already typed in, and write nothing until you approve.
 
@@ -62,7 +62,7 @@ Every script has a `pnpm` alias that takes the same args.
 
 ## Running overnight
 
-Run it in `tmux` or a window you leave open, with sleep disabled. Run one repo at a time per machine, since they share a usage pool: `./overnight.sh repo-a && ./overnight.sh repo-b`. With no repo, it runs every eligible repo in turn.
+Overnight is a script, not a skill: it runs for hours and launches its own sessions, so start it from a terminal (`./overnight.sh some-repo`, or `<nightlight>/overnight.sh .` from inside the repo). Run it in `tmux` or a window you leave open, with sleep disabled. Run one repo at a time per machine, since they share a usage pool: `./overnight.sh repo-a && ./overnight.sh repo-b`. With no repo, it runs every eligible repo in turn.
 
 ```bash
 ./overnight.sh some-repo --stop-after 27     # through task #27
