@@ -10,6 +10,7 @@
 #   them (including its own single-repo requirement for all but --limit and
 #   --force) -- see overnight.sh's own usage comment for what each does.
 set -e
+export NL_CALLER_PWD="${NL_CALLER_PWD:-$PWD}"
 cd "$(dirname "$0")"
 
 REPO=""

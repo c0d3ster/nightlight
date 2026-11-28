@@ -12,7 +12,9 @@
 #   to flip taskSource. Tidy never writes taskSource. GitHub only; Linear is out of scope.
 set -e
 
+NL_CALLER_PWD="${NL_CALLER_PWD:-$PWD}"
 cd "$(dirname "$0")"
+source lib/paths.sh
 git pull --quiet || echo "warn: could not pull latest nightlight rules, running with local copy"
 
 set -a; source .env; set +a
@@ -32,10 +34,7 @@ done
 
 [[ -n "$REPO" ]] || { echo "usage: pnpm tidy <repo> [--labels | --no-labels]"; exit 1; }
 
-# same repo resolution as plan.sh / discover.sh / migrate.sh
-[[ "$REPO" != "$(basename "$PWD")" ]] || REPO="."
-[[ -d "$REPO" ]] || REPO="$PROJECT_REPOS_DIR/$REPO"
-REPO="$(cd "$REPO" && pwd -W)"
+REPO="$(nl_resolve_repo "$REPO")" || exit 1
 
 # default: label only when the repo's task source is github
 if [[ -z "$LABELS" ]]; then
