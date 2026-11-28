@@ -6,7 +6,9 @@
 #   since this rewrites a repo's task source).
 set -e
 
+NL_CALLER_PWD="${NL_CALLER_PWD:-$PWD}"
 cd "$(dirname "$0")"
+source lib/paths.sh
 git pull --quiet || echo "warn: could not pull latest nightlight rules, running with local copy"
 
 set -a; source .env; set +a
@@ -27,10 +29,7 @@ done
 [[ -n "$REPO" ]] || { echo "usage: pnpm migrate <repo> --to github|linear"; exit 1; }
 [[ "$TO" == "github" || "$TO" == "linear" ]] || { echo "--to must be github or linear (local to remote, one direction)"; exit 1; }
 
-# same repo resolution as plan.sh / discover.sh
-[[ "$REPO" != "$(basename "$PWD")" ]] || REPO="."
-[[ -d "$REPO" ]] || REPO="$PROJECT_REPOS_DIR/$REPO"
-REPO="$(cd "$REPO" && pwd -W)"
+REPO="$(nl_resolve_repo "$REPO")" || exit 1
 
 if [[ "$TO" == "linear" ]]; then
   TEAM="$(jq -r '.linear.teamId // empty' "$REPO/docs/nightlight-meta.json" 2>/dev/null || true)"

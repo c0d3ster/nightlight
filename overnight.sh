@@ -35,7 +35,9 @@
 #                          --force when a previous run survived the wrapper
 #                          dying (closed window, Windows signal drop).
 set -e
+NL_CALLER_PWD="${NL_CALLER_PWD:-$PWD}"
 cd "$(dirname "$0")"
+source lib/paths.sh
 
 # Always run with the latest rules
 git pull --quiet || echo "warn: could not pull latest nightlight rules, running with local copy"
@@ -1096,15 +1098,10 @@ queue_linear_tasks() {
 
 run_repo() {
   local repo_path="$1"
-  # Canonicalize before naming anything off it: a relative arg like "."
-  # or "../nightlight" must resolve to the real directory name (e.g.
-  # "nightlight"), not literally "." or "..", or every log/stats file this
-  # run produces gets misnamed. pwd -W, not plain pwd -P: this same
-  # $repo_path is later passed straight to claude's --add-dir, and only
-  # pwd -W's uppercase-drive-letter form matches the casing Claude Code's
-  # directory-trust store uses elsewhere (see discover.sh/plan.sh, which
-  # hit this same casing bug first).
-  repo_path="$(cd "$repo_path" 2>/dev/null && pwd -W)" || { echo "error: can't resolve target repo path: $1"; return 1; }
+  # Canonicalize before naming anything off it, so logs and stats get the
+  # real folder name, and --add-dir gets the form Claude Code's trust store
+  # matches (lib/paths.sh).
+  repo_path="$(nl_abspath "$repo_path")" || { echo "error: can't resolve target repo path: $1"; return 1; }
   local name; name="$(basename "$repo_path")"
   local tasks="$repo_path/TASKS.md"
   load_task_source "$repo_path" || return 1
@@ -1400,11 +1397,7 @@ $task_result"
 # us when task branches check out. Exit on the same line as the final block
 # closes, so bash never reads past it into whatever the file became.
 if [[ -n "$REPO" ]]; then
-  TARGET="$REPO"
-  # the repo's own folder name (e.g. "nightlight") means this checkout, wherever
-  # it lives; the script cd'd to its own dir above, so "." is this repo.
-  [[ "$TARGET" != "$(basename "$PWD")" ]] || TARGET="."
-  [[ -d "$TARGET" ]] || TARGET="$PROJECT_REPOS_DIR/$REPO"
+  TARGET="$(nl_resolve_repo "$REPO")" || exit 1
   run_repo "$TARGET"
 else
   [[ -z "$STOP_AFTER$STACK$EXTRA_INSTRUCTIONS$OVERRIDE_PROMPT" ]] || { echo "these run flags require a single target repo (--limit is the exception, it applies per repo)"; exit 1; }

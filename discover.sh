@@ -7,7 +7,9 @@
 #              repo qualifies, no filtering needed
 set -e
 
+NL_CALLER_PWD="${NL_CALLER_PWD:-$PWD}"
 cd "$(dirname "$0")"
+source lib/paths.sh
 git pull --quiet || echo "warn: could not pull latest nightlight rules, running with local copy"
 
 set -a; source .env; set +a
@@ -24,17 +26,7 @@ for arg in "$@"; do
 done
 
 if [[ -n "$REPO" ]]; then
-  # the repo's own folder name (e.g. "nightlight") means this checkout, wherever
-  # it lives; the script cd'd to its own dir above, so "." is this repo.
-  [[ "$REPO" != "$(basename "$PWD")" ]] || REPO="."
-  [[ -d "$REPO" ]] || REPO="$PROJECT_REPOS_DIR/$REPO"
-  # resolve to an absolute path so "." and "./" (e.g. self-targeting nightlight
-  # from inside its own directory) end up byte-identical before reaching --add-dir.
-  # pwd -W (not plain pwd) keeps the Windows-style uppercase drive letter --
-  # plain pwd's POSIX-style lowercase-drive path (/c/Users/...) doesn't match
-  # the casing Claude Code's directory-trust store uses elsewhere, so trust
-  # never "sticks" and every subrepo re-prompts on every run.
-  REPO="$(cd "$REPO" && pwd -W)"
+  REPO="$(nl_resolve_repo "$REPO")" || exit 1
   MSYS_NO_PATHCONV=1 claude "/discover-tasks$SCAN_FLAG" --add-dir "$REPO"
 else
   # No repo given and no filter exists for discover, so every repo under
@@ -42,6 +34,6 @@ else
   # rather than building one flag per repo (identical access either way when
   # nothing gets excluded). The /discover-tasks skill enumerates the repo
   # subdirectories itself once it's running.
-  PROJECT_REPOS_DIR="$(cd "$PROJECT_REPOS_DIR" && pwd -W)"
+  PROJECT_REPOS_DIR="$(nl_abspath "$PROJECT_REPOS_DIR")"
   MSYS_NO_PATHCONV=1 claude "/discover-tasks$SCAN_FLAG" --add-dir "$PROJECT_REPOS_DIR"
 fi
