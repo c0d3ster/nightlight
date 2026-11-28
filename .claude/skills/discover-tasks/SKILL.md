@@ -1,6 +1,6 @@
 ---
 name: discover-tasks
-description: Mines a target repo's own memory (and, with --scan, its docs and README) for task candidates and proposes additions to its TASKS.md § Discovered. Run before /plan-tasks when task ideas have accumulated from direct work sessions in the target repo.
+description: Turns a target repo's known work (its memory and its PRDs in docs/prd/) into task candidates and proposes additions to its TASKS.md § Discovered. With --deep, also scans its README, code, other docs and research for untracked work. Run before /plan-tasks after writing a PRD or when task ideas have accumulated in the repo's memory.
 disable-model-invocation: true
 hooks:
   PreToolUse:
@@ -14,7 +14,7 @@ hooks:
 
 `<nl>` below is the nightlight checkout holding this skill, as an absolute path: the skill's base directory with symlinks followed (it may be loaded through a link in `~/.claude/skills`), three levels up: `cd -P <skill base directory> && cd ../../.. && pwd`. The target repo is, in order: the --add-dir repo if one is attached; else the repo the args name (a sibling checkout's name, or a path); else the current working directory's repo (`git rev-parse --show-toplevel`) when it is a git checkout other than `<nl>`; else list the git checkouts beside `<nl>` and ask me to pick (one or more; each counts as attached below). Resolve it to an absolute path. Run scripts from `<nl>` by absolute path, never relative to the cwd. GitHub calls are REST: copy the `gh api` commands below as written, and never use `gh issue`, `gh pr`, `gh label` or `gh repo`, which need GraphQL and fail in cloud sessions. `<owner/repo>` is `github.repo` from the repo's `docs/nightlight-meta.json` for issues when set, else `bash <nl>/lib/github.sh slug <repo-path>` (PRs always use the latter). A merge's branch delete can be refused in cloud sessions: `merge-pr.sh` then warns, and you say so in the summary and carry on.
 
-Two independent sourcing phases: memory-mining (always runs) and repo-scanning (only with `--scan`).
+Default sources are the known work: memory and PRDs (Phases 1 and 2, always run). `--deep` adds the repo scan (Phase 2b), a deep dive for work nobody wrote down. `--scan` is the old name of `--deep`; treat it the same and tell me it was renamed.
 
 ## Multi-repo mode
 
@@ -23,8 +23,8 @@ Determine this from the attached directory's structure, never by assumption: doe
 - Yes: it's a single target repo. Phases 1–4 below apply directly, exactly as written — this is today's behavior, unchanged.
 - No, but its immediate subdirectories do: the attached directory is `PROJECT_REPOS_DIR` itself, and the repo set is those subdirectories. Run this flow instead of a single Phases 1–4 pass:
   1. Announce: "Found N repo(s) under `<dir>`."
-  2. Dispatch one `general-purpose` agent per repo for Phase 1 + Phase 2 steps 1–2 (memory only), and, when `--scan` is passed, one `task-scout` agent per repo for the scan (subagents generally cannot spawn subagents, so dispatch `task-scout` directly from here). All in a single message, foreground, batched in groups of ~8 if there are more than that, each told its one repo's absolute path. Each reports candidates only (task text, rationale, source) — report only, never ask, never write.
-  3. Once every dispatch returns, go through repos in the order they were listed. For each one: run Phase 2 steps 4 and 5 (choose docs, then present its candidates and get my approval), then immediately Phase 3 (write) and Phase 4 (finalize) for that repo, before moving to the next.
+  2. Dispatch one `general-purpose` agent per repo for Phases 1 and 2 (memory and PRDs, including the Dedupe lookups), and, with `--deep`, one `task-scout` agent per repo for Phase 2b (subagents generally cannot spawn subagents, so dispatch `task-scout` directly from here). All in a single message, foreground, batched in groups of ~8 if there are more than that, each told its one repo's absolute path and `<nl>`. Each reports candidates only, in the candidate shape below — report only, never ask, never write.
+  3. Once every dispatch returns, go through repos in the order they were listed. For each one: run Phase 2b's doc choice (with `--deep`) and Phase 2c (present its candidates and get my approval), then immediately Phase 3 (write) and Phase 4 (finalize) for that repo, before moving to the next.
 
 ## Task source mode
 
@@ -32,17 +32,16 @@ Per repo (in multi-repo mode, each subdirectory), read `taskSource` from its `do
 
 - `local`: Phases 1-4 apply exactly as written.
 - `github` (remote): never edit TASKS.md, delete nothing from TASKS.md, and open no chore PR for this repo. Deltas:
-  - Phase 2 step 2: dedupe through the Dedupe section below instead of TASKS.md and `docs/tasks-archive/`.
   - Phase 3: after approval, run `bash <nl>/lib/ensure-labels.sh <target-repo-path>` (creates any missing `nl:*` labels, safe to repeat; GitHub rejects labels that don't exist), then for each approved candidate run `gh api -X POST repos/<owner/repo>/issues -f title='<task text>' -F body=@<file> -f 'labels[]=nl:discovered' --jq .html_url` (the file holds the rationale and source; label name from the repo's `labels.discovered` if set). Memory-sourced items still get their source memory file and MEMORY.md line deleted (step 3), but that is a local memory edit, not a commit. Announce "Done - N issue(s) created, N memory file(s) cleared."
   - Phase 4: skipped entirely. Report the created issue URLs instead.
 - `linear` (remote): same deltas as `github`, but the tracker is the repo's Linear team (`linear.teamId`) and every write goes through the Linear MCP tools, never `gh api` issue or label calls:
-  - Phase 2 step 2: dedupe through the Dedupe section below. "Reopen" is `save_issue` to an unstarted status (`list_issue_statuses`), "link as follow-up" is `save_comment` on the related issue.
+  - Dedupe: "reopen" is `save_issue` to an unstarted status (`list_issue_statuses`), "link as follow-up" is `save_comment` on the related issue.
   - Phase 3: after approval, create `nl:discovered` if the team lacks it (`list_issue_labels`, then `create_issue_label`), then `save_issue` to create one issue per approved candidate with the task text as the title, the rationale and source as the description, and the `nl:discovered` label (name from `labels.discovered` if set). Memory-sourced items still get their source memory file and MEMORY.md line deleted (step 3). Announce "Done - N issue(s) created, N memory file(s) cleared."
   - Phase 4: skipped entirely. Report the created issue URLs instead.
 
 ## Dedupe (every mode)
 
-For each candidate, before proposing it, run `ts_find_related <repo> "<short distinctive phrase from the candidate>"` (output: state, id, title or file:line). Local matches by fixed string, so keep the phrase short. For matches that look implemented, confirm with a cheap code check: dispatch `task-scout` in verify mode (prompt: the candidate text, the related items with ids and states, and the repo path). Then show every match in the proposal with its id, state (open, closed, archived, or looks implemented) and a one-line reason, and ask per match: skip the candidate, reopen the closed item, link the candidate to it as a follow-up, or create it anyway. Never drop a candidate silently. Candidates with no matches proceed as normal.
+For each candidate, before proposing it, run `ts_find_related <repo> "<short distinctive phrase from the candidate>"` (output: state, id, title or file:line). Local matches by fixed string, so keep the phrase short. For a PRD unit, also look up its reference `docs/prd/<file> <unit>` (the `PRD:` line `/plan-tasks` writes on every task it plans from a PRD), which finds it even after its title was reworded. Run all of a repo's lookups in one Bash call. For matches that look implemented, confirm with a cheap code check: dispatch `task-scout` in verify mode (prompt: the candidate text, the related items with ids and states, and the repo path). Then show every match in the proposal with its id, state (open, closed, archived, or looks implemented) and a one-line reason, and ask per match: skip the candidate, reopen the closed item, link the candidate to it as a follow-up, or create it anyway. Never drop a candidate silently. Candidates with no matches proceed as normal.
 
 Announce each phase to me in one line before starting it.
 
@@ -52,20 +51,28 @@ Announce each phase to me in one line before starting it.
 2. Determine self-targeting by comparing paths, never by assumption: get the target repo's absolute path (see Target repo) and this session's own primary working directory (from environment info). Self-targeting applies ONLY if these two paths are the same directory — i.e. nightlight is discovering on itself. State the comparison result explicitly before proceeding (e.g. "target repo == primary dir, this is self-targeting" or "target repo != primary dir, treating as a separate repo").
 3. Self-targeting confirmed: the target repo's memory is just this session's own memory, already loaded — use its MEMORY.md directly, skip step 4.
 4. Not self-targeting: find the entry in `~/.claude/projects/` whose name matches the target repo's absolute path (`:` and path separators → `-`) — that's its own memory folder, distinct from nightlight's since memory is scoped to the session's primary directory, not add-dir targets. Confirm against the real listing rather than assuming the encoding.
-5. No matching folder, or no MEMORY.md: say so plainly, skip to Phase 2 step 3 (repo-scan), or exit if `--scan` wasn't passed either.
+5. No matching folder, or no MEMORY.md: say so plainly and carry on with Phase 2 step 2 (PRDs).
 
-## Phase 2: propose candidates
+## Phase 2: known work
 
-1. Read the target repo's MEMORY.md and its indexed files. Pull only entries reading as concrete, discrete work — most `project`-type memories are context, not tasks.
-2. Cross-reference against the target repo's TASKS.md (open items) and `docs/tasks-archive/*.md` (completed). Drop anything already covered.
-3. `--scan` passed: dispatch one `task-scout` agent (foreground, absolute repo path in the prompt) for the read-only Docs, README, and code passes, or use its result directly if already inside a per-repo dispatch. Its agent file defines the passes and the output contract (task text, rationale, source).
-4. Choose docs first. The scan's `## Docs` summary lists every plan/PRD/spec/research doc with how much is implemented and how many untracked items remain. When it lists 2+ docs with candidates, or any research doc, show it as a numbered list (path, kind, `~N% implemented`, items remaining; research docs marked "opt-in, no candidates yet") and ask which to break out into Discovered. Skip the question for a single doc with candidates and no research docs. Drop the candidates of every doc I don't pick. For research docs I pick, re-dispatch `task-scout` (foreground, repo path plus "Include research docs: <paths>") and add its doc candidates to the list. README, code and memory candidates are not affected by this choice.
-5. Announce: "Found N candidate(s) from memory[, M from repo scan]." Present the remaining list grouped by source doc (memory, README and code candidates in their own groups), each plan/PRD/spec group as its proposed stacks with every unit listed in order and its open decision noted — task text, one-line rationale, source — for my approval. I can rename or regroup the stacks and settle open decisions here. Write nothing until I approve; accept/reject individually.
+1. Memory: read the target repo's MEMORY.md and its indexed files. Pull only entries reading as concrete, discrete work: most `project`-type memories are context, not tasks. A memory that only points at a doc (a research doc, a plan) is not a candidate in default mode; mention it in one line under "Skipped" so I can run `--deep` for it.
+2. PRDs: announce "Reading N PRD(s) in `docs/prd/`." Read every `docs/prd/*.md` whose `Status:` line isn't `done`. The format is defined in `<nl>/.claude/skills/write-prd/SKILL.md` (Format); older PRDs follow it loosely, so read them by meaning. Each unit is a candidate: every entry under `## Proposed issues`, or, when a PRD has none, every milestone under `## Milestones`. Skip units and milestones marked `Status: done`. Skip units the PRD lists under another repo's name (a PRD spanning two repos may list both); that repo's own PRD covers them. For each, keep the PRD's own wording and acceptance criteria, its stack from the `Stacks:` line, its `Depends on` and `Open decision`, and the reference `PRD: docs/prd/<file> <unit>` (unit as the PRD labels it, e.g. `M3` or `3a`). A dependency on another repo stays as written (e.g. `Depends on: c0d3ster 3a`). A PRD with no milestones or proposed issues produces no candidates: say so and suggest `/write-prd` to restructure it. Never read `docs/research/` or any other doc in this phase.
+3. Run the Dedupe lookups for every candidate.
+
+## Phase 2b: deep scan (`--deep` only)
+
+1. Dispatch one `task-scout` agent (foreground, absolute repo path in the prompt, plus "Check PRD units:" with the PRD candidates' references from Phase 2) for the read-only Docs, README, and code passes, or use its result directly if already inside a per-repo dispatch. Its agent file defines the passes and the output contract.
+2. Choose docs. The scan's `## Docs` summary lists every non-PRD plan, spec and research doc with how much is implemented and how many untracked items remain. When it lists 2+ docs with candidates, or any research doc, show it as a numbered list (path, kind, `~N% implemented`, items remaining; research docs marked "opt-in, no candidates yet") and ask which to break out into Discovered. Skip the question for a single doc with candidates and no research docs. Drop the candidates of every doc I don't pick. For research docs I pick, re-dispatch `task-scout` (foreground, repo path plus "Include research docs: <paths>") and add its doc candidates to the list. README, code, PRD and memory candidates are not affected by this choice.
+3. Drop any PRD candidate the scan's `## PRD units` section reports `implemented`, and show it under "Skipped" with its evidence. Run the Dedupe lookups for the scan's own candidates.
+
+## Phase 2c: propose
+
+Announce: "Found N candidate(s) from memory, M from PRDs[, K from the deep scan]." Present the list grouped by source (memory, each PRD, then with `--deep` each picked doc, README, code), each PRD or doc group as its proposed stacks with every unit listed in order and its open decision noted: task text, one-line rationale, source, and the Dedupe matches. I can rename or regroup the stacks and settle open decisions here. Write nothing until I approve; accept/reject individually.
 
 ## Phase 3: write approved candidates
 
 1. Announce: "Writing N approved item(s) to TASKS.md."
-2. Append each approved candidate under `## Discovered` (create if absent): one-line description + source, plus, for doc candidates, `Proposed stack: <name> (<order>)`, `Depends on`, and `Open decision` (in remote modes, as lines in the issue body). A decision I made here is written as `Decided: <decision>` in place of `Open decision`; omit `Open decision: none`. No `#<n>` or `[stack]` tag (or stack label) — `/plan-tasks` assigns those, starting from the proposed stack.
+2. Append each approved candidate under `## Discovered` (create if absent): one-line description + source, plus, for PRD and doc candidates, `Proposed stack: <name> (<order>)`, `Depends on`, and `Open decision`, and for PRD candidates the `PRD: docs/prd/<file> <unit>` line (in remote modes, as lines in the issue body). A decision I made here is written as `Decided: <decision>` in place of `Open decision`; omit `Open decision: none`. No `#<n>` or `[stack]` tag (or stack label) — `/plan-tasks` assigns those, starting from the proposed stack.
 3. Memory-sourced items: delete the source memory file and its MEMORY.md line. Leave rejected candidates untouched.
 4. Announce: "Done — N item(s) added to TASKS.md § Discovered, N memory file(s) cleared."
 
@@ -81,7 +88,7 @@ Uncommitted content in the target repo's working tree is dangerous — lost work
 6. Commit as `chore(tasks): discover N candidate task(s)`, body listing each item and its memory source.
 7. Push, open a PR (`gh api -X POST repos/<owner/repo>/pulls -f head=<branch> -f base=<default> -f title='<title>' -F body=@<file> --jq .html_url`) targeting the default branch — title matches the commit, body summarizes the additions.
 8. Report the PR URL.
-9. Merge it: `bash <nl>/lib/merge-pr.sh <repo> <branch-name>` (a rebase merge, then a best-effort branch delete), using the exact branch name from step 4 (not a PR number — the script only merges `chore/tasks-discover-*` branches, and that's what the scoped permission matches against). This is safe specifically because every item going in was already explicitly approved by me in Phase 2 step 4 — the merge completes something already signed off on, it doesn't approve anything new.
+9. Merge it: `bash <nl>/lib/merge-pr.sh <repo> <branch-name>` (a rebase merge, then a best-effort branch delete), using the exact branch name from step 4 (not a PR number — the script only merges `chore/tasks-discover-*` branches, and that's what the scoped permission matches against). This is safe specifically because every item going in was already explicitly approved by me in Phase 2c — the merge completes something already signed off on, it doesn't approve anything new.
 10. Merge command fails (e.g. branch protection requires a review)? Report the failure plainly and leave the PR open. Don't retry, don't force, don't fall back to raw `git merge` — that stays denied regardless.
 11. Merge succeeds: `git -C <repo> checkout` the default branch and pull latest, so the working tree's TASKS.md reflects the merge before this session ends — that's what lets a later `/plan-tasks` or `overnight.sh` run see these additions without anyone merging by hand.
 

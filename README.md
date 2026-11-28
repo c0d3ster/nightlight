@@ -40,10 +40,10 @@ Every script has a `pnpm` alias that takes the same args.
 
 | Script | pnpm | What it does |
 | --- | --- | --- |
-| `./discover.sh [repo] [--scan]` | `pnpm discover` | find task candidates in the repo's memory (with `--scan`, its docs and code too) |
+| `./discover.sh [repo] [--deep]` | `pnpm discover` | turn the repo's memory and PRDs into task candidates (with `--deep`, also its README, code and other docs) |
 | `./plan.sh [repo]` | `pnpm plan` | break tasks down, number them, assign stacks |
 | `./overnight.sh [repo] [flags]` | `pnpm overnight` | the unattended run |
-| `./nightlight.sh [repo] [--scan] [flags]` | `pnpm nightlight` | discover, plan and overnight chained, with a `[y/N]` before overnight |
+| `./nightlight.sh [repo] [--deep] [flags]` | `pnpm nightlight` | discover, plan and overnight chained, with a `[y/N]` before overnight |
 | `./migrate.sh <repo> --to github\|linear` | `pnpm migrate` | move `TASKS.md` into issues, or adopt existing issues |
 | `./tidy.sh <repo> [--labels\|--no-labels]` | `pnpm tidy` | close shipped or stale GitHub issues; `--labels` labels the rest |
 | `./stats.sh [repo]` | `pnpm stats` | cost, time and task totals |
@@ -55,6 +55,7 @@ Every script has a `pnpm` alias that takes the same args.
 - **Interactive scripts:** `discover`, `plan`, `migrate` and `tidy` open a normal session with the skill already typed in, and write nothing until you approve.
 
 ```bash
+/write-prd                  # optional, in a session: draft a PRD in docs/prd/
 ./discover.sh some-repo     # optional: collect task candidates
 ./plan.sh some-repo         # break down anything new or vague
 ./overnight.sh some-repo    # the unattended run
@@ -87,7 +88,8 @@ Live output shows one `=== session started ===` / `=== session done ===` pair pe
 
 | Skill | Script | What it does |
 | --- | --- | --- |
-| `/discover-tasks [--scan]` | `discover.sh` | proposes task candidates |
+| `/write-prd` | none | drafts a PRD in `docs/prd/` with you and opens a PR for it |
+| `/discover-tasks [--deep]` | `discover.sh` | proposes task candidates |
 | `/plan-tasks` | `plan.sh` | breaks tasks down, assigns `#<n>` numbers, stacks (it leans toward stacking, since a wrong `solo` risks conflicting PRs) and acceptance criteria |
 | `/migrate-tasks --to github\|linear` | `migrate.sh` | moves `TASKS.md` into issues, or adopts existing ones |
 | `/tidy-issues [--labels]` | `tidy.sh` | reviews open unlabeled GitHub issues |
@@ -95,6 +97,12 @@ Live output shows one `=== session started ===` / `=== session done ===` pair pe
 Every skill investigates first and asks before writing.
 - **Local mode:** the only writes are the task list and `docs/nightlight-meta.json`, through a small PR the skill merges once you've approved its content.
 - **GitHub and Linear mode:** the writes are issues and labels.
+- **`/write-prd`:** writes only the PRD, through a PR it never merges.
+
+**Where tasks come from:** write a PRD with `/write-prd`, merge it, then run `/discover-tasks`.
+- **Default:** discover reads the known work: the repo's Claude memory and every PRD in `docs/prd/` not marked `done`. Each PRD unit becomes a candidate with its stack, dependencies and open decision. `/plan-tasks` keeps a `PRD: docs/prd/<file> <unit>` reference on every task, which is how a later discover knows the unit is tracked.
+- **`--deep`:** also checks README claims against the code, TODOs and skipped tests, other plan and spec docs with how much is implemented, and whether PRD units are already built. Research docs are always opt-in; you pick them from a list.
+- **Two repos:** one PRD per repo, each listing only its own units and linking the other. A unit that waits on the other repo stays in Discovered until that work lands.
 
 The skills use two subagents, `task-scout` and `task-investigator`, which live in `.claude/agents/`.
 

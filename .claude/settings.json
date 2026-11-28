@@ -41,6 +41,8 @@
       "Bash(git -C * push origin chore/tasks-plan-*)",
       "Bash(git push origin chore/tasks-migrate-*)",
       "Bash(git -C * push origin chore/tasks-migrate-*)",
+      "Bash(git push origin docs/prd-*)",
+      "Bash(git -C * push origin docs/prd-*)",
       "Bash(git pull:*)",
       "Bash(git -C * pull*)",
       "Bash(git push origin --delete overnight/*)",
